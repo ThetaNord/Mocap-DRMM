@@ -87,6 +87,12 @@ def parse_args(argv):
         action='store_true'
     )
     parser.add_argument(
+        '--no-plot',
+        dest='no_plot',
+        help='do not display plots for animation samples',
+        action='store_true'
+    )
+    parser.add_argument(
         '--seed',
         dest='seed',
         help='seed for initializing tensorflow random number generation',
@@ -271,7 +277,8 @@ def main(args):
                                         64, fargs=(graph,), interval=33, blit=False)
     skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
     # Show plot
-    plt.show()
+    if not args.no_plot:
+        plt.show()
 
 if __name__ == '__main__':
     # Parse command line arguments
