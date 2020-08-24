@@ -1,4 +1,4 @@
-import os, time
+import sys, os, time, argparse
 
 import numpy as np
 import pandas as pd
@@ -43,7 +43,7 @@ def parse_args(argv):
         '--seq-length',
         dest='sequence_length',
         help='how many time steps per sequence',
-        default=60,
+        default=64,
         type=int
     )
     parser.add_argument(
@@ -64,7 +64,7 @@ def parse_args(argv):
         '--sample-batch-size',
         dest='sample_batch_size',
         help='batch size to be used when sampling the model',
-        default=64,
+        default=32,
         type=int
     )
     parser.add_argument(
@@ -76,16 +76,15 @@ def parse_args(argv):
     )
     parser.add_argument(
         '--train-mode',
-        dest='training_mode',
+        dest='train_mode',
         help='whether to train a new model or not (yes/no/auto)',
         default='auto',
         type=str
     )
     parser.add_argument(
-        '--test',
-        dest='test',
-        help='whether the network should be tested against the test set',
-        default=True,
+        '--no-test',
+        dest='no_test',
+        help='skip testing the network against the test set',
         action='store_true'
     )
     parser.add_argument(
@@ -216,35 +215,36 @@ def main(args):
             os.makedirs('models')
         saver.save(sess, args.model_filename)
     # Test model
-    waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
-    samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
-    samplingMask = np.zeros_like(samplingInputData)
-    samplingMask[:,waypointTimesteps,0] = 1.0
-    test_iterator = test_dataset.make_one_shot_iterator()
-    next_element = test_iterator.get_next()
-    # Iterate over the test set to calculate total error
-    errors = []
-    while True:
-        try:
-            # Get next element from test set, resize to sampling input
-            target = sess.run(next_element)
-            samplingInputData = np.resize(target, samplingInputData.shape)
-            # Sample the model
-            samples = model.sample(inputs=DataIn(data=samplingInputData,mask=samplingMask),
-                                    temperature=args.temperature, sorted=True)
-            #print("Samples shape: {}".format(samples.shape))
-            # Calculate the errors
-            sample_errors = np.sum(np.square(samples - samplingInputData).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
-            #print("Errors shape: {}".format(sample_errors.shape))
-            min_distance = np.min(sample_errors[:10])
-            #print("First 10 errors: {}".format(sample_errors[:10]))
-            #print("Minimum distance: {}".format(min_distance))
-            errors.append(min_distance)
-        except tf.errors.OutOfRangeError:
-            break
-    total_error = np.sum(errors)
-    average_error = total_error/len(errors)
-    print("Total error: {}\nAverage error: {}".format(total_error, average_error))
+    if not args.no_test:
+        waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+        samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
+        samplingMask = np.zeros_like(samplingInputData)
+        samplingMask[:,waypointTimesteps,0] = 1.0
+        test_iterator = test_dataset.make_one_shot_iterator()
+        next_element = test_iterator.get_next()
+        # Iterate over the test set to calculate total error
+        errors = []
+        while True:
+            try:
+                # Get next element from test set, resize to sampling input
+                target = sess.run(next_element)
+                samplingInputData = np.resize(target, samplingInputData.shape)
+                # Sample the model
+                samples = model.sample(inputs=DataIn(data=samplingInputData,mask=samplingMask),
+                                        temperature=args.temperature, sorted=True)
+                #print("Samples shape: {}".format(samples.shape))
+                # Calculate the errors
+                sample_errors = np.sum(np.square(samples - samplingInputData).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+                #print("Errors shape: {}".format(sample_errors.shape))
+                min_distance = np.min(sample_errors[:10])
+                #print("First 10 errors: {}".format(sample_errors[:10]))
+                #print("Minimum distance: {}".format(min_distance))
+                errors.append(min_distance)
+            except tf.errors.OutOfRangeError:
+                break
+        total_error = np.sum(errors)
+        average_error = total_error/len(errors)
+        print("Total error: {}\nAverage error: {}".format(total_error, average_error))
     # Sample from the model
     samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
     if args.debug: print(samples)
@@ -269,7 +269,7 @@ def main(args):
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, skeleton.animate_skeleton,
                                         64, fargs=(graph,), interval=33, blit=False)
-    skeleton_animation.save('animation.gif', writer='imagemagick', fps=30)
+    skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
     # Show plot
     plt.show()
 
