@@ -1,11 +1,10 @@
-import sys, os, time, argparse
+import sys, time, argparse
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import scipy
-from scipy.spatial.distance import cdist
 import tensorflow as tf
-from tensorflow.data.experimental import make_csv_dataset
+
 import DRMM
 from DRMM import DRMMBlockHierarchy, dataStream, DataIn
 
@@ -137,7 +136,7 @@ class Skeleton:
 
 def loadDataset(data_path):
     # Load the data from the provided .npz file
-    data_array = np.load(data_path)
+    data_array = np.load(Path(data_path))
     # Convert into a Tensorflow dataset
     train_dataset = tf.data.Dataset.from_tensor_slices(data_array['train_data'])
     test_dataset = tf.data.Dataset.from_tensor_slices(data_array['test_data'])
@@ -172,7 +171,7 @@ def main(args):
     train = True if args.train_mode == "yes" else False
     # If train_mode is auto, check whether a model exists
     if args.train_mode == "auto":
-        train = not os.path.isfile(args.model_filename+".index")
+        train = not Path(args.model_filename+".index").is_file()
     # Create model
     model = DRMMBlockHierarchy(sess,
         inputs=dataStream(dataType="continuous",shape=[None,args.sequence_length,args.data_dimension],useGaussianPrior=True,useBoxConstraints=True),
@@ -210,9 +209,10 @@ def main(args):
                     info["loss"],
                     info["lr"],
                     info["rho"]),end="\r")
-        # TODO: Generalize for generating folder indicated by the mode filename path
-        if not os.path.exists('models'):
-            os.makedirs('models')
+        # Generate the directories for saving models if they do not already exist
+        model_path = Path(args.model_filename).parent
+        if not model_path.is_dir():
+            model_path.mkdir(parents=True, exist_ok=True)
         saver.save(sess, args.model_filename)
     # Test model
     if not args.no_test:
