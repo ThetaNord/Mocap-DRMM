@@ -225,7 +225,8 @@ def main(args):
         waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
         samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
         samplingMask = np.zeros_like(samplingInputData)
-        samplingMask[:,waypointTimesteps,0] = 1.0
+        samplingMask[:,waypointTimesteps,:] = 1.0
+        if (args.debug): print(samplingMask[0])
         test_iterator = test_dataset.make_one_shot_iterator()
         next_element = test_iterator.get_next()
         # Iterate over the test set to calculate total error
@@ -240,7 +241,7 @@ def main(args):
                                         temperature=args.temperature, sorted=True)
                 #print("Samples shape: {}".format(samples.shape))
                 # Calculate the errors
-                sample_errors = np.sum(np.square(samples - samplingInputData).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+                sample_errors = np.sum(np.square(np.subtract(samples, samplingInputData)).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
                 #print("Errors shape: {}".format(sample_errors.shape))
                 min_distance = np.min(sample_errors[:10])
                 #print("First 10 errors: {}".format(sample_errors[:10]))
