@@ -62,8 +62,8 @@ def parse_args(argv):
     parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
-        help='how to sample the dataset (conditioned/uncoditioned/none)',
-        default='uncoditioned',
+        help='how to sample the dataset (conditioned/unconditioned/none)',
+        default='unconditioned',
         type=str
     )
     parser.add_argument(
@@ -263,7 +263,7 @@ def sampleModel(model, args, condition_sample=None):
     best_index = 0
     waypoint_sample = np.zeros_like(condition_sample)
     if args.debug: print(waypoint_sample.shape)
-    if args.sample_mode == "uncoditioned":
+    if args.sample_mode == "unconditioned":
         samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
         if args.debug: print(samples)
     elif args.sample_mode == "conditioned":
@@ -298,7 +298,7 @@ def sampleModel(model, args, condition_sample=None):
     skeletons = []
     graphs = []
     animation_indices = [0]
-    if args.sample_mode == "uncoditioned":
+    if args.sample_mode == "unconditioned":
         # Create a single subplot
         ax1 = fig.add_subplot(111, projection='3d')
         # Set axis properties
