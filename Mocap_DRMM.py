@@ -227,6 +227,7 @@ def testModel(model, test_dataset, session, args):
 def sampleModel(model, args, condition_sample=None):
     # Sample from the model
     samples = None
+    best_index = 0
     if args.sample_mode == "uncoditioned":
         samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
         if args.debug: print(samples)
@@ -240,14 +241,23 @@ def sampleModel(model, args, condition_sample=None):
         samplingMask[:,waypointTimesteps,:] = 1.0
         samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                 temperature=args.temperature, sorted=True)
+        sample_errors = np.sum(np.square(np.subtract(samples, samplingInputData)).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+        min_error = np.min(sample_errors[:10])
+        best_index = np.where(sample_errors[:10] == min_error)[0][0]
+        if args.debug:
+            print("Most likely sample errors:\n{}".format(sample_errors[:10]))
+            print("Smallest error: {}".format(min_error))
+            print("Best index: {}".format(best_index))
     # Create a skeleton with the given samples
     skeleton = Skeleton(samples)
     condition_skeleton = Skeleton(np.array([condition_sample]))
+    print("Best sample error: {}".format(np.sum(np.square(np.subtract(samples[best_index], condition_sample))), axis=1))
     # Visualize a sample
     fig = plt.figure()
     ax1, ax2 = None, None
     skeletons = []
     graphs = []
+    animation_indices = [0, best_index]
     if args.sample_mode == "uncoditioned":
         # Create a single subplot
         ax1 = fig.add_subplot(111, projection='3d')
@@ -299,7 +309,7 @@ def sampleModel(model, args, condition_sample=None):
         graphs = [graph1, graph2]
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
-                                        64, fargs=(skeletons, graphs), interval=33, blit=False)
+                                        64, fargs=(skeletons, graphs, animation_indices), interval=33, blit=False)
     skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
