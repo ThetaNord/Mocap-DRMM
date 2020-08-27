@@ -268,33 +268,35 @@ def sampleModel(model, args, condition_sample=None):
         skeletons.append(skeleton)
         graphs.append(graph)
     elif args.sample_mode == "conditioned":
-         # Create two subplots
-         ax1 = fig.add_subplot(121, projection='3d')
-         ax2 = fig.add_subplot(122, projection='3d')
-         # Set axis properties
-         ax1.set_xlim3d([1.0, -1.0])
-         ax1.set_xlabel('X')
-         ax1.set_ylim3d([1.0, -1.0])
-         ax1.set_ylabel('Z')
-         ax1.set_zlim3d([0.0, 2.0])
-         ax1.set_zlabel('Y')
-         ax1.set_title('Original Animation')
-         # Set axis properties
-         ax2.set_xlim3d([1.0, -1.0])
-         ax2.set_xlabel('X')
-         ax2.set_ylim3d([1.0, -1.0])
-         ax2.set_ylabel('Z')
-         ax2.set_zlim3d([0.0, 2.0])
-         ax2.set_zlabel('Y')
-         ax2.set_title('Conditioned Sample')
-         # Get initial joint positions
-         xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
-         graph1 = ax1.scatter(xs, zs, ys)
-         # Get initial joint positions
-         xs, ys, zs = skeleton.get_all_joint_positions(0)
-         graph2 = ax2.scatter(xs, zs, ys)
-         skeletons = [condition_skeleton, skeleton]
-         graphs = [graph1, graph2]
+        # Make the plot wider
+        fig.set_figwidth(12)
+        # Create two subplots
+        ax1 = fig.add_subplot(121, projection='3d')
+        ax2 = fig.add_subplot(122, projection='3d')
+        # Set axis properties
+        ax1.set_xlim3d([1.0, -1.0])
+        ax1.set_xlabel('X')
+        ax1.set_ylim3d([1.0, -1.0])
+        ax1.set_ylabel('Z')
+        ax1.set_zlim3d([0.0, 2.0])
+        ax1.set_zlabel('Y')
+        ax1.set_title('Original Animation')
+        # Set axis properties
+        ax2.set_xlim3d([1.0, -1.0])
+        ax2.set_xlabel('X')
+        ax2.set_ylim3d([1.0, -1.0])
+        ax2.set_ylabel('Z')
+        ax2.set_zlim3d([0.0, 2.0])
+        ax2.set_zlabel('Y')
+        ax2.set_title('Conditioned Sample')
+        # Get initial joint positions
+        xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
+        graph1 = ax1.scatter(xs, zs, ys)
+        # Get initial joint positions
+        xs, ys, zs = skeleton.get_all_joint_positions(0)
+        graph2 = ax2.scatter(xs, zs, ys)
+        skeletons = [condition_skeleton, skeleton]
+        graphs = [graph1, graph2]
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                         64, fargs=(skeletons, graphs), interval=33, blit=False)
