@@ -129,7 +129,6 @@ def parse_args(argv):
 class Skeleton:
 
     def __init__(self, joint_array):
-        print(joint_array.shape)
         self.joint_list = ['hips', 'spine', 'left_upper_leg', 'left_lower_leg',
             'left_foot', 'right_upper_leg', 'right_lower_leg', 'right_foot',
             'left_shoulder', 'left_upper_arm', 'left_lower_arm', 'left_hand',
@@ -274,10 +273,6 @@ def sampleModel(model, args, condition_sample=None):
         waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
         waypoint_sample[:args.sequence_length//2] = condition_sample[args.sequence_length//2]
         waypoint_sample[args.sequence_length//2:] = condition_sample[-1]
-        if args.debug:
-            print(waypoint_sample[0:2])
-            print(waypoint_sample[31:34])
-            print(waypoint_sample[-2:])
         samplingInputData = np.resize(condition_sample, (args.sample_batch_size, args.sequence_length, args.data_dimension))
         samplingMask = np.zeros_like(samplingInputData)
         samplingMask[:,waypointTimesteps,:] = 1.0
@@ -292,9 +287,11 @@ def sampleModel(model, args, condition_sample=None):
             print("Best index: {}".format(best_index))
     # Create a skeleton with the given samples
     skeleton = Skeleton(samples)
-    condition_skeleton = Skeleton(np.array([condition_sample]))
-    waypoint_skeleton = Skeleton(np.array([waypoint_sample]))
-    print("Best sample error: {}".format(np.sum(np.square(np.subtract(samples[best_index], condition_sample))), axis=1))
+    condition_skeleton, waypoint_skeleton = None, None
+    if args.sample_mode == "conditioned":
+        condition_skeleton = Skeleton(np.array([condition_sample]))
+        waypoint_skeleton = Skeleton(np.array([waypoint_sample]))
+        print("Best sample error: {}".format(np.sum(np.square(np.subtract(samples[best_index], condition_sample))), axis=1))
     # Visualize a sample
     fig = plt.figure()
     ax1, ax2 = None, None
@@ -412,6 +409,7 @@ def main(args):
         testModel(model, test_dataset, sess, args)
     # Sample from the model
     if args.sample_mode is not "none":
+        #iterator = test_dataset.shuffle(buffer_size=100).make_one_shot_iterator()
         iterator = test_dataset.make_one_shot_iterator()
         next_element = iterator.get_next()
         sampleModel(model, args, sess.run(next_element))
