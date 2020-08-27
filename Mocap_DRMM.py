@@ -202,22 +202,24 @@ def testModel(model, test_dataset, session, args):
             samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                     temperature=args.temperature, sorted=True)
             # Calculate the errors
-            sample_errors = None
+            min_error = None
             if args.debug:
                 absolute_error = np.subtract(samples, samplingInputData)
                 square_error = np.square(absolute_error)
                 sample_errors = np.sum(square_error.reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+                min_error = np.min(sample_errors[:10])
+                print("First 10 errors: {}".format(sample_errors[:10]))
                 print("First absolute error matrix: {}".format(absolute_error[0]))
                 print("First square error matrix: {}".format(square_error[0]))
                 print("Sum of first square error matrix: {}".format(np.sum(square_error[0])))
                 print("Total sample square error: {}".format(sample_errors[0]))
             else:
-                sample_errors = np.sum(np.square(np.subtract(samples, samplingInputData)).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
-            min_distance = np.min(sample_errors[:10])
+                #min_error = np.min(np.sum(np.square(np.subtract(samples[:10], samplingInputData[:10])).reshape(10, args.sequence_length*args.data_dimension), axis=1))
+                min_error = np.min(np.sum(np.square(np.subtract(samples[:10], samplingInputData[:10])), axis=1))
+                print(min)
             if args.debug:
-                print("First 10 errors: {}".format(sample_errors[:10]))
-                print("Minimum error: {}".format(min_distance))
-            errors.append(min_distance)
+                print("Minimum error: {}".format(min_error))
+            errors.append(min_error)
         except tf.errors.OutOfRangeError:
             break
     total_error = np.sum(errors)
