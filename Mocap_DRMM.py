@@ -60,6 +60,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--sample-mode',
+        dest='sample_mode',
+        help='how to sample the dataset (conditioned/uncoditioned/none)',
+        default='uncoditioned',
+        type=str
+    )
+    parser.add_argument(
         '--sample-batch-size',
         dest='sample_batch_size',
         help='batch size to be used when sampling the model',
@@ -165,6 +172,52 @@ def getDataBatch(batch_size, next_element, tf_session):
     dataBatch = np.asarray(dataBatch)
     return dataBatch
 
+def testModel(model, test_dataset, session, args):
+    # Define timesteps which condition samples
+    waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+    samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
+    samplingMask = np.zeros_like(samplingInputData)
+    samplingMask[:,waypointTimesteps,:] = 1.0
+    # Create iterator for the test dataset
+    test_iterator = test_dataset.make_one_shot_iterator()
+    next_element = test_iterator.get_next()
+    # Iterate over the test set to calculate total error
+    errors = []
+    while True:
+        try:
+            # Get next element from test set, resize to sampling input
+            target = session.run(next_element)
+            samplingInputData = np.resize(target, samplingInputData.shape)
+            if args.debug:
+                print("First input sequence: {}".format(samplingInputData[0]))
+                print("Last input sequence: {}".format(samplingInputData[-1]))
+                print("Total difference: {}".format(np.sum(np.subtract(samplingInputData[0], samplingInputData[-1]))))
+            # Sample the model
+            samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
+                                    temperature=args.temperature, sorted=True)
+            # Calculate the errors
+            sample_errors = None
+            if args.debug:
+                absolute_error = np.subtract(samples, samplingInputData)
+                square_error = np.square(absolute_error)
+                sample_errors = np.sum(square_error.reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+                print("First absolute error matrix: {}".format(absolute_error[0]))
+                print("First square error matrix: {}".format(square_error[0]))
+                print("Sum of first square error matrix: {}".format(np.sum(square_error[0])))
+                print("Total sample square error: {}".format(sample_errors[0]))
+            else:
+                sample_errors = np.sum(np.square(np.subtract(samples, samplingInputData)).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+            min_distance = np.min(sample_errors[:10])
+            if args.debug:
+                print("First 10 errors: {}".format(sample_errors[:10]))
+                print("Minimum error: {}".format(min_distance))
+            errors.append(min_distance)
+        except tf.errors.OutOfRangeError:
+            break
+    total_error = np.sum(errors)
+    average_error = total_error/len(errors)
+    print("Total error: {}\nAverage error: {}".format(total_error, average_error))
+
 def main(args):
     global ITERATOR
     #Init tf
@@ -222,36 +275,7 @@ def main(args):
         saver.save(sess, args.model_filename)
     # Test model
     if not args.no_test:
-        waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
-        samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
-        samplingMask = np.zeros_like(samplingInputData)
-        samplingMask[:,waypointTimesteps,:] = 1.0
-        if (args.debug): print(samplingMask[0])
-        test_iterator = test_dataset.make_one_shot_iterator()
-        next_element = test_iterator.get_next()
-        # Iterate over the test set to calculate total error
-        errors = []
-        while True:
-            try:
-                # Get next element from test set, resize to sampling input
-                target = sess.run(next_element)
-                samplingInputData = np.resize(target, samplingInputData.shape)
-                # Sample the model
-                samples = model.sample(inputs=DataIn(data=samplingInputData,mask=samplingMask),
-                                        temperature=args.temperature, sorted=True)
-                #print("Samples shape: {}".format(samples.shape))
-                # Calculate the errors
-                sample_errors = np.sum(np.square(np.subtract(samples, samplingInputData)).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
-                #print("Errors shape: {}".format(sample_errors.shape))
-                min_distance = np.min(sample_errors[:10])
-                #print("First 10 errors: {}".format(sample_errors[:10]))
-                #print("Minimum distance: {}".format(min_distance))
-                errors.append(min_distance)
-            except tf.errors.OutOfRangeError:
-                break
-        total_error = np.sum(errors)
-        average_error = total_error/len(errors)
-        print("Total error: {}\nAverage error: {}".format(total_error, average_error))
+        testModel(model, test_dataset, sess, args)
     # Sample from the model
     samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
     if args.debug: print(samples)
