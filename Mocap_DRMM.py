@@ -214,9 +214,7 @@ def testModel(model, test_dataset, session, args):
                 print("Sum of first square error matrix: {}".format(np.sum(square_error[0])))
                 print("Total sample square error: {}".format(sample_errors[0]))
             else:
-                #min_error = np.min(np.sum(np.square(np.subtract(samples[:10], samplingInputData[:10])).reshape(10, args.sequence_length*args.data_dimension), axis=1))
-                min_error = np.min(np.sum(np.square(np.subtract(samples[:10], samplingInputData[:10])), axis=1))
-                print(min)
+                min_error = np.min(np.sum(np.square(np.subtract(samples[:10], samplingInputData[:10])).reshape(10, args.sequence_length*args.data_dimension), axis=1))
             if args.debug:
                 print("Minimum error: {}".format(min_error))
             errors.append(min_error)
