@@ -262,6 +262,8 @@ def sampleModel(model, args, condition_sample=None):
     # Sample from the model
     samples = None
     best_index = 0
+    waypoint_sample = np.zeros_like(condition_sample)
+    if args.debug: print(waypoint_sample.shape)
     if args.sample_mode == "uncoditioned":
         samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
         if args.debug: print(samples)
@@ -270,6 +272,12 @@ def sampleModel(model, args, condition_sample=None):
             print("Condition sample required!")
             return
         waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+        waypoint_sample[:args.sequence_length//2] = condition_sample[args.sequence_length//2]
+        waypoint_sample[args.sequence_length//2:] = condition_sample[-1]
+        if args.debug:
+            print(waypoint_sample[0:2])
+            print(waypoint_sample[31:34])
+            print(waypoint_sample[-2:])
         samplingInputData = np.resize(condition_sample, (args.sample_batch_size, args.sequence_length, args.data_dimension))
         samplingMask = np.zeros_like(samplingInputData)
         samplingMask[:,waypointTimesteps,:] = 1.0
@@ -285,13 +293,14 @@ def sampleModel(model, args, condition_sample=None):
     # Create a skeleton with the given samples
     skeleton = Skeleton(samples)
     condition_skeleton = Skeleton(np.array([condition_sample]))
+    waypoint_skeleton = Skeleton(np.array([waypoint_sample]))
     print("Best sample error: {}".format(np.sum(np.square(np.subtract(samples[best_index], condition_sample))), axis=1))
     # Visualize a sample
     fig = plt.figure()
     ax1, ax2 = None, None
     skeletons = []
     graphs = []
-    animation_indices = [0, best_index]
+    animation_indices = [0]
     if args.sample_mode == "uncoditioned":
         # Create a single subplot
         ax1 = fig.add_subplot(111, projection='3d')
@@ -339,8 +348,12 @@ def sampleModel(model, args, condition_sample=None):
         # Get initial joint positions
         xs, ys, zs = skeleton.get_all_joint_positions(0)
         graph2 = ax2.scatter(xs, zs, ys)
-        skeletons = [condition_skeleton, skeleton]
-        graphs = [graph1, graph2]
+        # Get initial joint positions
+        xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
+        graph3 = ax2.scatter(xs, zs, ys, c='red', alpha=0.2)
+        skeletons = [condition_skeleton, skeleton, waypoint_skeleton]
+        graphs = [graph1, graph2, graph3]
+        animation_indices = [0, best_index, 0]
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                         64, fargs=(skeletons, graphs, animation_indices), interval=33, blit=False)
