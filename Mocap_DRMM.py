@@ -147,6 +147,12 @@ class Skeleton:
         xs, ys, zs = self.get_all_joint_positions(t, animation_index)
         graph._offsets3d = (xs, zs, ys)
 
+def animateMultipleSkeletons(t, skeletons, graphs, animation_indices=None):
+    if animation_indices is None:
+        animation_indices = [0 for s in skeletons]
+    for skeleton, graph, index in zip(skeletons, graphs, animation_indices):
+        skeleton.animate_skeleton(t, graph, index)
+
 def loadDataset(data_path):
     # Load the data from the provided .npz file
     data_array = np.load(Path(data_path))
@@ -218,6 +224,85 @@ def testModel(model, test_dataset, session, args):
     average_error = total_error/len(errors)
     print("Total error: {}\nAverage error: {}".format(total_error, average_error))
 
+def sampleModel(model, args, condition_sample=None):
+    # Sample from the model
+    samples = None
+    if args.sample_mode == "uncoditioned":
+        samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
+        if args.debug: print(samples)
+    elif args.sample_mode == "conditioned":
+        if condition_sample is None:
+            print("Condition sample required!")
+            return
+        waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+        samplingInputData = np.resize(condition_sample, (args.sample_batch_size, args.sequence_length, args.data_dimension))
+        samplingMask = np.zeros_like(samplingInputData)
+        samplingMask[:,waypointTimesteps,:] = 1.0
+        samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
+                                temperature=args.temperature, sorted=True)
+    # Create a skeleton with the given samples
+    skeleton = Skeleton(samples)
+    condition_skeleton = Skeleton(np.array([condition_sample]))
+    # Visualize a sample
+    fig = plt.figure()
+    ax1, ax2 = None, None
+    skeletons = []
+    graphs = []
+    if args.sample_mode == "uncoditioned":
+        # Create a single subplot
+        ax1 = fig.add_subplot(111, projection='3d')
+        # Set axis properties
+        ax1.set_xlim3d([1.0, -1.0])
+        ax1.set_xlabel('X')
+        ax1.set_ylim3d([1.0, -1.0])
+        ax1.set_ylabel('Z')
+        ax1.set_zlim3d([0.0, 2.0])
+        ax1.set_zlabel('Y')
+        ax1.set_title('Sample Animation')
+        # Get initial joint positions
+        xs, ys, zs = skeleton.get_all_joint_positions(0)
+        # For now, just plot as points
+        # TODO: Plot the actual skeleton
+        #graph, = ax.plot(xs, ys, zs, linestyle="", marker="o")
+        graph = ax1.scatter(xs, zs, ys)
+        skeletons.append(skeleton)
+        graphs.append(graph)
+    elif args.sample_mode == "conditioned":
+         # Create two subplots
+         ax1 = fig.add_subplot(121, projection='3d')
+         ax2 = fig.add_subplot(122, projection='3d')
+         # Set axis properties
+         ax1.set_xlim3d([1.0, -1.0])
+         ax1.set_xlabel('X')
+         ax1.set_ylim3d([1.0, -1.0])
+         ax1.set_ylabel('Z')
+         ax1.set_zlim3d([0.0, 2.0])
+         ax1.set_zlabel('Y')
+         ax1.set_title('Original Animation')
+         # Set axis properties
+         ax2.set_xlim3d([1.0, -1.0])
+         ax2.set_xlabel('X')
+         ax2.set_ylim3d([1.0, -1.0])
+         ax2.set_ylabel('Z')
+         ax2.set_zlim3d([0.0, 2.0])
+         ax2.set_zlabel('Y')
+         ax2.set_title('Conditioned Sample')
+         # Get initial joint positions
+         xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
+         graph1 = ax1.scatter(xs, zs, ys)
+         # Get initial joint positions
+         xs, ys, zs = skeleton.get_all_joint_positions(0)
+         graph2 = ax2.scatter(xs, zs, ys)
+         skeletons = [condition_skeleton, skeleton]
+         graphs = [graph1, graph2]
+    # Create the Animation object
+    skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
+                                        64, fargs=(skeletons, graphs), interval=33, blit=False)
+    skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
+    # Show plot
+    if not args.no_plot:
+        plt.show()
+
 def main(args):
     global ITERATOR
     #Init tf
@@ -277,33 +362,10 @@ def main(args):
     if not args.no_test:
         testModel(model, test_dataset, sess, args)
     # Sample from the model
-    samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
-    if args.debug: print(samples)
-    skeleton = Skeleton(samples)
-    # Visualize a sample
-    fig = plt.figure()
-    ax = fig.add_subplot(111, projection='3d')
-    # Set axis properties
-    ax.set_xlim3d([1.0, -1.0])
-    ax.set_xlabel('X')
-    ax.set_ylim3d([1.0, -1.0])
-    ax.set_ylabel('Z')
-    ax.set_zlim3d([0.0, 2.0])
-    ax.set_zlabel('Y')
-    ax.set_title('Sample Animation')
-    # Get initial joint positions
-    xs, ys, zs = skeleton.get_all_joint_positions(0)
-    # For now, just plot as points
-    # TODO: Plot the actual skeleton
-    #graph, = ax.plot(xs, ys, zs, linestyle="", marker="o")
-    graph = ax.scatter(xs, zs, ys)
-    # Create the Animation object
-    skeleton_animation = animation.FuncAnimation(fig, skeleton.animate_skeleton,
-                                        64, fargs=(graph,), interval=33, blit=False)
-    skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
-    # Show plot
-    if not args.no_plot:
-        plt.show()
+    if args.sample_mode is not "none":
+        iterator = test_dataset.make_one_shot_iterator()
+        next_element = iterator.get_next()
+        sampleModel(model, args, sess.run(next_element))
 
 if __name__ == '__main__':
     # Parse command line arguments
