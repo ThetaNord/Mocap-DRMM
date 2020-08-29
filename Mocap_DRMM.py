@@ -368,7 +368,7 @@ def sampleModel(model, args, condition_sample=None):
     if args.sample_mode == "conditioned":
         condition_skeleton = Skeleton(np.array([condition_sample]))
         waypoint_skeleton = Skeleton(np.array([waypoint_sample]))
-        print("Best sample error: {}".format(np.sum(np.square(np.subtract(samples[best_index], condition_sample))), axis=1))
+        print("Best sample error: {}".format(sample_errors[best_index]))
     # Visualize a sample
     fig = plt.figure()
     ax1, ax2 = None, None
