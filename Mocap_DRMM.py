@@ -333,6 +333,7 @@ def testModel(model, test_dataset, session, args):
 def sampleModel(model, args, condition_sample=None):
     # Sample from the model
     samples = None
+    sample_errors = None
     best_index = 0
     waypoint_sample = np.zeros_like(condition_sample)
     if args.debug: print(waypoint_sample.shape)
