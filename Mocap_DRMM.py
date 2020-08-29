@@ -72,6 +72,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--sample-cutoff',
+        dest='sample_cutoff',
+        help='how many samples from the batch to consider for evaluation',
+        default=10,
+        type=int
+    )
+    parser.add_argument(
         '--temperature',
         dest='temperature',
         help='the temperature to be used when sampling the model',
@@ -93,10 +100,11 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
-        '--no-test',
-        dest='no_test',
-        help='skip testing the network against the test set',
-        action='store_true'
+        '--test-mode',
+        dest='test_mode',
+        help='whether and how to calculate error in testing (all/keypoints/none)',
+        default='all',
+        type=str
     )
     parser.add_argument(
         '--no-plot',
@@ -181,6 +189,16 @@ def getDataBatch(batch_size, next_element, tf_session):
         dataBatch.append(data)
     dataBatch = np.asarray(dataBatch)
     return dataBatch
+
+def calculateMinimumError(samples, targets, args, masks=None):
+    if args.test_mode == "keypoints":
+        if masks is None:
+            print("ERROR: masks must be provided for keypoint error calculation")
+            return
+        samples = np.multiply(masks, samples)
+        targets = np.multiply(masks, targets)
+    min_error = np.min(np.sum(np.square(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(10, args.sequence_length*args.data_dimension), axis=1))
+    return min_error
 
 def createModel(session, train, args):
     model = None
@@ -277,19 +295,7 @@ def testModel(model, test_dataset, session, args):
             samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                     temperature=args.temperature, sorted=True)
             # Calculate the errors
-            min_error = None
-            if args.debug:
-                absolute_error = np.subtract(samples, samplingInputData)
-                square_error = np.square(absolute_error)
-                sample_errors = np.sum(square_error.reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
-                min_error = np.min(sample_errors[:10])
-                print("First 10 errors: {}".format(sample_errors[:10]))
-                print("First absolute error matrix: {}".format(absolute_error[0]))
-                print("First square error matrix: {}".format(square_error[0]))
-                print("Sum of first square error matrix: {}".format(np.sum(square_error[0])))
-                print("Total sample square error: {}".format(sample_errors[0]))
-            else:
-                min_error = np.min(np.sum(np.square(np.subtract(samples[:10], samplingInputData[:10])).reshape(10, args.sequence_length*args.data_dimension), axis=1))
+            min_error = calculateMinimumError(samples, samplingInputData, args, samplingMask)
             if args.debug:
                 print("Minimum error: {}".format(min_error))
             errors.append(min_error)
@@ -447,7 +453,7 @@ def main(args):
             model_path.mkdir(parents=True, exist_ok=True)
         saver.save(sess, args.model_filename)
     # Test model
-    if not args.no_test:
+    if args.test_mode is not "none":
         testModel(model, test_dataset, sess, args)
     # Sample from the model
     if args.sample_mode is not "none":
