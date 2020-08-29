@@ -259,7 +259,7 @@ def createModel(session, train, args):
             lastBlockLayers=5,
             train=train,    #if False, optimization ops will not be created, which saves some time
             initialLearningRate=0.005)
-    if args.model_type == "large-kernel":
+    elif args.model_type == "large-kernel":
         model = DRMMBlockHierarchy(session,
             inputs=dataStream(
                 dataType="continuous",
@@ -271,6 +271,24 @@ def createModel(session, train, args):
                 {"nClasses":256,"nLayers":2,"kernelSize":9,"stride":2},
                 {"nClasses":256,"nLayers":3,"kernelSize":9,"stride":2},
                 {"nClasses":256,"nLayers":4,"kernelSize":9,"stride":2},
+            ],
+            lastBlockClasses=256,
+            lastBlockLayers=5,
+            train=train,    #if False, optimization ops will not be created, which saves some time
+            initialLearningRate=0.005)
+    elif args.model_type == "large-kernel-extended":
+        model = DRMMBlockHierarchy(session,
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
+            blockDefs=[
+                {"nClasses":256,"nLayers":2,"kernelSize":9,"stride":2},
+                {"nClasses":256,"nLayers":3,"kernelSize":9,"stride":2},
+                {"nClasses":256,"nLayers":4,"kernelSize":9,"stride":2},
+                {"nClasses":256,"nLayers":5,"kernelSize":9,"stride":2},
             ],
             lastBlockClasses=256,
             lastBlockLayers=5,
@@ -333,11 +351,14 @@ def sampleModel(model, args, condition_sample=None):
         samplingMask[:,waypointTimesteps,:] = 1.0
         samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                 temperature=args.temperature, sorted=True)
-        sample_errors = np.sum(np.square(np.subtract(samples, samplingInputData)).reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
-        min_error = np.min(sample_errors[:10])
-        best_index = np.where(sample_errors[:10] == min_error)[0][0]
+        square_errors = np.square(np.subtract(samples, samplingInputData))
+        if args.error_mode is "keypoints":
+            square_errors = np.multiply(samplingMask, square_errors)
+        sample_errors = np.sum(square_errors.reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
+        min_error = np.min(sample_errors[:args.sample_cutoff])
+        best_index = np.where(sample_errors[:args.sample_cutoff] == min_error)[0][0]
         if args.debug:
-            print("Most likely sample errors:\n{}".format(sample_errors[:10]))
+            print("Most likely sample errors:\n{}".format(sample_errors[:args.sample_cutoff]))
             print("Smallest error: {}".format(min_error))
             print("Best index: {}".format(best_index))
     # Create a skeleton with the given samples
