@@ -2,7 +2,6 @@ import sys, time, argparse
 from pathlib import Path
 
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 
 import DRMM
@@ -10,7 +9,6 @@ from DRMM import DRMMBlockHierarchy, dataStream, DataIn
 
 # Visualization libraries
 import matplotlib.pyplot as plt
-import mpl_toolkits.mplot3d.axes3d as p3
 import matplotlib.animation as animation
 
 ITERATOR = None
@@ -188,18 +186,28 @@ def createModel(session, train, args):
     model = None
     if args.model_type == "baseline":
         model = DRMMBlockHierarchy(session,
-            inputs=dataStream(dataType="continuous",shape=[None,args.sequence_length,args.data_dimension],useGaussianPrior=True,useBoxConstraints=True),
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
             blockDefs=[
                 {"nClasses":256,"nLayers":2,"kernelSize":7,"stride":2},   #input seq. length 32, output length 16
                 {"nClasses":256,"nLayers":3,"kernelSize":7,"stride":2},   #in 16, out 8
             ],
             lastBlockClasses=256,
             lastBlockLayers=4,
-            train=train,
+            train=train,    #if False, optimization ops will not be created, which saves some time
             initialLearningRate=0.005)
     elif args.model_type == "extended":
         model = DRMMBlockHierarchy(session,
-            inputs=dataStream(dataType="continuous",shape=[None,args.sequence_length,args.data_dimension],useGaussianPrior=True,useBoxConstraints=True),
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
             blockDefs=[
                 {"nClasses":256,"nLayers":6,"kernelSize":5,"stride":2},   #input seq. length 64, output length 32
                 {"nClasses":256,"nLayers":8,"kernelSize":5,"stride":2},   #in 32, out 16
@@ -209,6 +217,23 @@ def createModel(session, train, args):
             lastBlockLayers=10,
             train=train,    #if False, optimization ops will not be created, which saves some time
             initialLearningRate=0.002)
+    elif args.model_type == "extended-lite":
+        model = DRMMBlockHierarchy(session,
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
+            blockDefs=[
+                {"nClasses":256,"nLayers":3,"kernelSize":7,"stride":2},   #input seq. length 64, output length 32
+                {"nClasses":256,"nLayers":4,"kernelSize":7,"stride":2},   #in 32, out 16
+                {"nClasses":256,"nLayers":5,"kernelSize":7,"stride":2},   #in 16, out 8
+            ],
+            lastBlockClasses=256,
+            lastBlockLayers=5,
+            train=train,    #if False, optimization ops will not be created, which saves some time
+            initialLearningRate=0.005)
     return model
 
 def testModel(model, test_dataset, session, args):
@@ -392,7 +417,7 @@ def main(args):
         for i in range(args.iteration_count):
             info = model.train(i/args.iteration_count,
                             getDataBatch(args.batch_size, next_element, sess))
-            if i % 10 == 0:
+            if i % 100 == 0:
                 print("Stage {}/{}, Iteration {}/{}, Loss {:.3f}, learning rate {:.6f}, precision {:.3f}".format(
                     info["stage"],info["nStages"],
                     i, args.iteration_count,
