@@ -353,7 +353,7 @@ def sampleModel(model, args, condition_sample=None):
         samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                 temperature=args.temperature, sorted=True)
         square_errors = np.square(np.subtract(samples, samplingInputData))
-        if args.error_mode is "keypoints":
+        if args.error_mode == "keypoints":
             square_errors = np.multiply(samplingMask, square_errors)
         sample_errors = np.sum(square_errors.reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
         min_error = np.min(sample_errors[:args.sample_cutoff])
