@@ -100,9 +100,15 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
-        '--test-mode',
-        dest='test_mode',
-        help='whether and how to calculate error in testing (all/keypoints/none)',
+        '--no-test',
+        dest='no_test',
+        help='skip testing the network against the test set',
+        action='store_true'
+    )
+    parser.add_argument(
+        '--error-mode',
+        dest='error_mode',
+        help='how to calculate error in sampling and testing (all/keypoints)',
         default='all',
         type=str
     )
@@ -191,7 +197,7 @@ def getDataBatch(batch_size, next_element, tf_session):
     return dataBatch
 
 def calculateMinimumError(samples, targets, args, masks=None):
-    if args.test_mode == "keypoints":
+    if args.error_mode == "keypoints":
         if masks is None:
             print("ERROR: masks must be provided for keypoint error calculation")
             return
@@ -453,7 +459,7 @@ def main(args):
             model_path.mkdir(parents=True, exist_ok=True)
         saver.save(sess, args.model_filename)
     # Test model
-    if args.test_mode is not "none":
+    if not args.no_test:
         testModel(model, test_dataset, sess, args)
     # Sample from the model
     if args.sample_mode is not "none":
