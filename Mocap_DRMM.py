@@ -294,6 +294,24 @@ def createModel(session, train, args):
             lastBlockLayers=5,
             train=train,    #if False, optimization ops will not be created, which saves some time
             initialLearningRate=0.005)
+    elif args.model_type == "large-kernel-extra-layer":
+        model = DRMMBlockHierarchy(session,
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
+            blockDefs=[
+                {"nClasses":256,"nLayers":3,"kernelSize":9,"stride":2},
+                {"nClasses":256,"nLayers":4,"kernelSize":9,"stride":2},
+                {"nClasses":256,"nLayers":5,"kernelSize":9,"stride":2},
+                {"nClasses":256,"nLayers":6,"kernelSize":9,"stride":2},
+            ],
+            lastBlockClasses=256,
+            lastBlockLayers=6,
+            train=train,    #if False, optimization ops will not be created, which saves some time
+            initialLearningRate=0.004)
     return model
 
 def testModel(model, test_dataset, session, args):
