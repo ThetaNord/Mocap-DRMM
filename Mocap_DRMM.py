@@ -80,6 +80,12 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--shuffle-conditions',
+        dest='shuffle_conditions',
+        help='if this flag is set, test set is shuffled before picking conditioning sample',
+        action='store_true'
+    )
+    parser.add_argument(
         '--temperature',
         dest='temperature',
         help='the temperature to be used when sampling the model',
@@ -541,7 +547,8 @@ def main(args):
         testModel(model, test_dataset, sess, args)
     # Sample from the model
     if args.sample_mode is not "none":
-        #iterator = test_dataset.shuffle(buffer_size=100).make_one_shot_iterator()
+        if args.shuffle_conditions:
+            test_dataset = test_dataset.shuffle(buffer_size=1000)
         iterator = test_dataset.make_one_shot_iterator()
         next_element = iterator.get_next()
         sampleModel(model, args, sess.run(next_element))
