@@ -32,21 +32,21 @@ SEQUENCE_LENGTH = 64    # The desired sequence length the data should be cut to
 STEP_SIZE = 64          # Number of steps to offset sequences pulled from same animation
 TEST_SET_SIZE = 0.1     # The relative size of the test set
 
-# Takes a numpy array of shape [N, 3M] and rotates each [1,3] subset around the y-axis
-def rotateMatrix(matrix, radians):
+# Takes a numpy array of shape [N, 3M] and rotates each [1,3] subset based on the given sine and cosine
+def rotateMatrix(matrix, cosine, sine):
     if DEBUG_LEVEL > 1: print("Original matrix:\n{}".format(matrix))
-    cosine = np.cos(radians)
     cos_matrix = np.resize(np.array([cosine, 1, cosine]), matrix.shape)
     if DEBUG_LEVEL > 1: print("Cosine matrix:\n{}".format(cos_matrix))
     rot_matrix = np.multiply(cos_matrix, matrix)
     if DEBUG_LEVEL > 1: print("Intermediate matrix:\n{}".format(rot_matrix))
     aux_matrix = np.zeros(matrix.shape)
-    sine = np.sin(radians)
     aux_matrix[:, 0::3] = -sine * np.copy(matrix[:, 2::3])
     aux_matrix[:, 2::3] = sine * np.copy(matrix[:, 0::3])
     if DEBUG_LEVEL > 1: print("Auxiliary matrix:\n{}".format(aux_matrix))
     rot_matrix = np.add(rot_matrix, aux_matrix)
-    if DEBUG_LEVEL > 1: print("Rotated matrix:\n{}".format(rot_matrix))
+    if DEBUG_LEVEL > 1:
+        print("Rotated matrix:\n{}".format(rot_matrix))
+        print("Difference:\n{}".format(np.subtract(rot_matrix, matrix)))
     return rot_matrix
 
 def processDataFrame(dataFrame):
@@ -72,7 +72,7 @@ def processDataFrame(dataFrame):
     processedFrame = processedFrame.astype(np.float64)
     # Convert from data frame to numpy array
     processedFrame = processedFrame.values
-    if NORMALIZE_ROTATION:
+    if NORMALIZE_POSITION:
         # Normalize position based on first frame
         if DEBUG_LEVEL > 1: print(processedFrame[-1])
         origin = processedFrame[0, root_index:root_index+3].copy()
@@ -88,11 +88,27 @@ def processDataFrame(dataFrame):
         shoulder_vector[1] = 0
         if DEBUG_LEVEL > 1: print(shoulder_vector)
         axis = np.array([0,0,1])
-        # Calculate angle between vector and z axis (in radians)
-        radians = np.arccos(shoulder_vector.dot(axis)/(np.linalg.norm(shoulder_vector)))
-        if DEBUG_LEVEL > 1: print(radians)
-        processedFrame = rotateMatrix(processedFrame, -radians)
-        if DEBUG_LEVEL > 1: print(processedFrame[0])
+        # Calculate sine and cosine of angle between vector and z axis (in radians)
+        magnitude = np.linalg.norm(shoulder_vector)
+        cosine = shoulder_vector.dot(axis)/magnitude
+        sine = np.linalg.norm(np.cross(shoulder_vector, axis))/magnitude
+        if DEBUG_LEVEL > 1:
+            print("Shoulder vector: {}".format(shoulder_vector))
+            print("Axis: {}".format(axis))
+            print("Cosine before rotation: {}".format(cosine))
+            print("Sine before rotation: {}".format(sine))
+        processedFrame = rotateMatrix(processedFrame, cosine, np.sign(shoulder_vector[0])*sine)
+        if DEBUG_LEVEL > 1:
+            #print(processedFrame[0])
+            shoulder_vector = processedFrame[0, shoulder_indices[1]:shoulder_indices[1]+3] - processedFrame[0, shoulder_indices[0]:shoulder_indices[0]+3]
+            shoulder_vector[1] = 0
+            magnitude = np.linalg.norm(shoulder_vector)
+            cosine = shoulder_vector.dot(axis)/magnitude
+            sine = np.linalg.norm(np.cross(shoulder_vector, axis))/magnitude
+            print("Cosine after rotation: {}".format(cosine))
+            print("Sine after rotation: {}".format(sine))
+            radians = np.arccos(cosine)
+            print("Radians after rotation (should be zero): {}".format(radians))
     # Return the processed frame
     return processedFrame
 
