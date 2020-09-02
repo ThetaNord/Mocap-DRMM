@@ -520,6 +520,7 @@ def showBestAndWorst(model, test_dataset, session, args):
     best_samples = []
     targets = []
     while True:
+    #for i in range(20):
         try:
             # Get next element from test set, resize to sampling input
             target = session.run(next_element)
@@ -543,33 +544,41 @@ def showBestAndWorst(model, test_dataset, session, args):
             break
     # Find best and worst samples
     errors = np.array(errors)
+    samples = np.array(best_samples)
+    targets = np.array(targets)
     best_example_indices = np.argpartition(errors, 5)[:5]
-    worst_example_indices = np.argpartition(errors, -5)[:5]
-    if args.debug:
-        print("Errors:\n{}".format(errors))
-        print("Best errors:\n{}".format(errors[best_example_indices]))
-        print("Worst errors:\n{}".format(errors[worst_example_indices]))
+    worst_example_indices = np.argpartition(errors, -5)[-5:]
     bw_indices = np.concatenate((best_example_indices, worst_example_indices))
+    print("Best errors:\n{}".format(errors[best_example_indices]))
+    print("Worst errors:\n{}".format(errors[worst_example_indices]))
+    if args.debug:
+        print("All errors:\n{}".format(errors))
+        print("Indice array:\n{}".format(bw_indices))
+        print("Samples:\n{}".format(samples))
+        print("Targets:\n{}".format(targets))
     # Create skeletons for the sample sequences
-    sample_skeletons = [Skeleton(sample) for sample in samples[bw_indices]]
+    sample_skeletons = [Skeleton(np.array([sample])) for sample in samples[bw_indices]]
     # Create skeletons for target sequences
-    target_skeletons = [Skeleton(target) for target in targets[bw_indices]]
+    target_skeletons = [Skeleton(np.array([target])) for target in targets[bw_indices]]
     # Create skeletons for keypoint sequences
     waypoints_skeletons = []
     for target in targets[bw_indices]:
+        if args.debug:
+            print("Target array: {}".format(target))
+            print("Target array shape: {}".format(target.shape))
         waypoint_sample = np.zeros_like(target)
         waypoint_sample[:args.sequence_length//2] = target[args.sequence_length//2]
         waypoint_sample[args.sequence_length//2:] = target[-1]
-        waypoints_skeletons.append(Skeleton(waypoint_sample))
+        waypoints_skeletons.append(Skeleton(np.array([waypoint_sample])))
     # Visualize
-    fig = plt.figure()
+    fig = plt.figure(figsize=(30, 10), dpi=100)
     skeletons = []
     graphs = []
     animation_indices = [0 for x in range(10)]
     for idx, sample_skeleton, target_skeleton, waypoint_skeleton in zip(range(10), sample_skeletons, target_skeletons, waypoints_skeletons):
         # Create subplots
-        ax1 = fig.add_subplot(10, 2, idx*2+1, projection='3d')
-        ax2 = fig.add_subplot(10, 2, idx*2+2, projection='3d')
+        ax1 = fig.add_subplot(2, 10, idx*2+1, projection='3d')
+        ax2 = fig.add_subplot(2, 10, idx*2+2, projection='3d')
         # Set axis properties
         ax1.set_xlim3d([1.0, -1.0])
         ax1.set_xlabel('X')
@@ -577,7 +586,7 @@ def showBestAndWorst(model, test_dataset, session, args):
         ax1.set_ylabel('Z')
         ax1.set_zlim3d([0.0, 2.0])
         ax1.set_zlabel('Y')
-        ax1.set_title('Original Animation')
+        ax1.set_title('Original')
         # Set axis properties
         ax2.set_xlim3d([1.0, -1.0])
         ax2.set_xlabel('X')
@@ -585,7 +594,7 @@ def showBestAndWorst(model, test_dataset, session, args):
         ax2.set_ylabel('Z')
         ax2.set_zlim3d([0.0, 2.0])
         ax2.set_zlabel('Y')
-        ax2.set_title('Conditioned Sample')
+        ax2.set_title('Sample')
         # Plot initial joint positions
         xs, ys, zs = target_skeleton.get_all_joint_positions(0)
         graphs.append(ax1.scatter(xs, zs, ys))
@@ -599,6 +608,7 @@ def showBestAndWorst(model, test_dataset, session, args):
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                         64, fargs=(skeletons, graphs), interval=33, blit=False)
+    # Save animation
     skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
