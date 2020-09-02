@@ -61,7 +61,7 @@ def parse_args(argv):
     parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
-        help='how to sample the dataset (conditioned/unconditioned/none)',
+        help='how to sample the dataset (conditioned/unconditioned/extremes/none)',
         default='unconditioned',
         type=str
     )
@@ -188,6 +188,13 @@ def loadDataset(data_path):
     train_dataset = train_dataset.shuffle(buffer_size=1000, reshuffle_each_iteration=True).repeat()
     return train_dataset, test_dataset
 
+def getTestItems(data_path, indices):
+    # Load the data from the provided .npz file
+    data_array = np.load(Path(data_path))
+    items = data_array['test_data'][indices]
+    print(items)
+    return items
+
 # Function for retrieving a single batch of training data
 def getDataBatch(batch_size, next_element, tf_session):
     global ITERATOR
@@ -210,8 +217,10 @@ def calculateMinimumError(samples, targets, args, masks=None):
             return
         samples = np.multiply(masks, samples)
         targets = np.multiply(masks, targets)
-    min_error = np.min(np.sum(np.square(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(10, args.sequence_length*args.data_dimension), axis=1))
-    return min_error
+    errors = np.sum(np.square(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(10, args.sequence_length*args.data_dimension), axis=1)
+    min_error = np.min(errors)
+    min_index = np.where(errors == min_error)[0][0]
+    return min_error, min_index
 
 def createModel(session, train, args):
     model = None
@@ -380,8 +389,8 @@ def testModel(model, test_dataset, session, args):
             # Sample the model
             samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                     temperature=args.temperature, sorted=True)
-            # Calculate the errors
-            min_error = calculateMinimumError(samples, samplingInputData, args, samplingMask)
+            # Calculate the error
+            min_error, _ = calculateMinimumError(samples, samplingInputData, args, samplingMask)
             if args.debug:
                 print("Minimum error: {}".format(min_error))
             errors.append(min_error)
@@ -497,6 +506,104 @@ def sampleModel(model, args, condition_sample=None):
     if not args.no_plot:
         plt.show()
 
+def showBestAndWorst(model, test_dataset, session, args):
+    # Define timesteps which condition samples
+    waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+    samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
+    samplingMask = np.zeros_like(samplingInputData)
+    samplingMask[:,waypointTimesteps,:] = 1.0
+    # Create iterator for the test dataset
+    test_iterator = test_dataset.make_one_shot_iterator()
+    next_element = test_iterator.get_next()
+    # Iterate over the test set to calculate errors
+    errors = []
+    best_samples = []
+    targets = []
+    while True:
+        try:
+            # Get next element from test set, resize to sampling input
+            target = session.run(next_element)
+            targets.append(target)
+            samplingInputData = np.resize(target, samplingInputData.shape)
+            if args.debug:
+                print("First input sequence: {}".format(samplingInputData[0]))
+                print("Last input sequence: {}".format(samplingInputData[-1]))
+                print("Total difference: {}".format(np.sum(np.subtract(samplingInputData[0], samplingInputData[-1]))))
+            # Sample the model
+            samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
+                                    temperature=args.temperature, sorted=True)
+            # Calculate the error
+            min_error, min_index = calculateMinimumError(samples, samplingInputData, args, samplingMask)
+            if args.debug:
+                print("Minimum error: {}".format(min_error))
+                print("Minimum error index: {}".format(min_index))
+            errors.append(min_error)
+            best_samples.append(samples[min_index])
+        except tf.errors.OutOfRangeError:
+            break
+    # Find best and worst samples
+    errors = np.array(errors)
+    best_example_indices = np.argpartition(errors, 5)[:5]
+    worst_example_indices = np.argpartition(errors, -5)[:5]
+    if args.debug:
+        print("Errors:\n{}".format(errors))
+        print("Best errors:\n{}".format(errors[best_example_indices]))
+        print("Worst errors:\n{}".format(errors[worst_example_indices]))
+    bw_indices = np.concatenate((best_example_indices, worst_example_indices))
+    # Create skeletons for the sample sequences
+    sample_skeletons = [Skeleton(sample) for sample in samples[bw_indices]]
+    # Create skeletons for target sequences
+    target_skeletons = [Skeleton(target) for target in targets[bw_indices]]
+    # Create skeletons for keypoint sequences
+    waypoints_skeletons = []
+    for target in targets[bw_indices]:
+        waypoint_sample = np.zeros_like(target)
+        waypoint_sample[:args.sequence_length//2] = target[args.sequence_length//2]
+        waypoint_sample[args.sequence_length//2:] = target[-1]
+        waypoints_skeletons.append(Skeleton(waypoint_sample))
+    # Visualize
+    fig = plt.figure()
+    skeletons = []
+    graphs = []
+    animation_indices = [0 for x in range(10)]
+    for idx, sample_skeleton, target_skeleton, waypoint_skeleton in zip(range(10), sample_skeletons, target_skeletons, waypoints_skeletons):
+        # Create subplots
+        ax1 = fig.add_subplot(10, 2, idx*2+1, projection='3d')
+        ax2 = fig.add_subplot(10, 2, idx*2+2, projection='3d')
+        # Set axis properties
+        ax1.set_xlim3d([1.0, -1.0])
+        ax1.set_xlabel('X')
+        ax1.set_ylim3d([1.0, -1.0])
+        ax1.set_ylabel('Z')
+        ax1.set_zlim3d([0.0, 2.0])
+        ax1.set_zlabel('Y')
+        ax1.set_title('Original Animation')
+        # Set axis properties
+        ax2.set_xlim3d([1.0, -1.0])
+        ax2.set_xlabel('X')
+        ax2.set_ylim3d([1.0, -1.0])
+        ax2.set_ylabel('Z')
+        ax2.set_zlim3d([0.0, 2.0])
+        ax2.set_zlabel('Y')
+        ax2.set_title('Conditioned Sample')
+        # Plot initial joint positions
+        xs, ys, zs = target_skeleton.get_all_joint_positions(0)
+        graphs.append(ax1.scatter(xs, zs, ys))
+        skeletons.append(target_skeleton)
+        xs, ys, zs = sample_skeleton.get_all_joint_positions(0)
+        graphs.append(ax2.scatter(xs, zs, ys))
+        skeletons.append(sample_skeleton)
+        xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
+        graphs.append(ax2.scatter(xs, zs, ys, c='red', alpha=0.2))
+        skeletons.append(waypoint_skeleton)
+    # Create the Animation object
+    skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
+                                        64, fargs=(skeletons, graphs), interval=33, blit=False)
+    skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
+    # Show plot
+    if not args.no_plot:
+        plt.show()
+
 def main(args):
     global ITERATOR
     #Init tf
@@ -547,11 +654,14 @@ def main(args):
         testModel(model, test_dataset, sess, args)
     # Sample from the model
     if args.sample_mode is not "none":
-        if args.shuffle_conditions:
-            test_dataset = test_dataset.shuffle(buffer_size=1000)
-        iterator = test_dataset.make_one_shot_iterator()
-        next_element = iterator.get_next()
-        sampleModel(model, args, sess.run(next_element))
+        if args.sample_mode == "extremes":
+            showBestAndWorst(model, test_dataset, sess, args)
+        else:
+            if args.shuffle_conditions:
+                test_dataset = test_dataset.shuffle(buffer_size=1000)
+            iterator = test_dataset.make_one_shot_iterator()
+            next_element = iterator.get_next()
+            sampleModel(model, args, sess.run(next_element))
 
 if __name__ == '__main__':
     # Parse command line arguments
