@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 
 # General parameters
 DEBUG_LEVEL = 1
+SEED = 0
 
 # File parameters
 DATA_PATH = 'data/CMU-Mocap-csv.zip' # Path to the zip file containing the data
@@ -151,7 +152,7 @@ def main():
     if (DEBUG_LEVEL > 0): print(len(data_list))
     full_data = np.array(data_list)
     if DEBUG_LEVEL > 0: print("Full dataset size: {}".format(full_data.shape[0]))
-    train_data, test_data = train_test_split(full_data, test_size=TEST_SET_SIZE)
+    train_data, test_data = train_test_split(full_data, test_size=TEST_SET_SIZE, random_state=SEED)
     if DEBUG_LEVEL > 0: print("Train dataset size: {}".format(train_data.shape[0]))
     if DEBUG_LEVEL > 0: print("Test dataset size: {}".format(test_data.shape[0]))
     # Save the arrays into a npy file
