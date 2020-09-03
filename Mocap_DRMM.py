@@ -546,8 +546,8 @@ def showBestAndWorst(model, test_dataset, session, args):
     errors = np.array(errors)
     samples = np.array(best_samples)
     targets = np.array(targets)
-    best_example_indices = np.argpartition(errors, 5)[:5]
-    worst_example_indices = np.argpartition(errors, -5)[-5:]
+    best_example_indices = np.argpartition(errors, 170)[:5]
+    worst_example_indices = np.argpartition(errors, -170)[-5:]
     bw_indices = np.concatenate((best_example_indices, worst_example_indices))
     print("Best errors:\n{}".format(errors[best_example_indices]))
     print("Worst errors:\n{}".format(errors[worst_example_indices]))
@@ -571,7 +571,7 @@ def showBestAndWorst(model, test_dataset, session, args):
         waypoint_sample[args.sequence_length//2:] = target[-1]
         waypoints_skeletons.append(Skeleton(np.array([waypoint_sample])))
     # Visualize
-    fig = plt.figure(figsize=(30, 10), dpi=100)
+    fig = plt.figure(figsize=(28, 10), dpi=100)
     skeletons = []
     graphs = []
     animation_indices = [0 for x in range(10)]
