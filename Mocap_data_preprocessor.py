@@ -1,7 +1,7 @@
 ''' Loads the CMU Mocap data from a zipfile, preprocesses it according to
     specifications and saves it as a numpy file.
 '''
-import os
+import os, sys, argparse
 import pandas as pd
 import numpy as np
 import zipfile
@@ -10,11 +10,6 @@ from sklearn.model_selection import train_test_split
 
 # General parameters
 DEBUG_LEVEL = 1
-SEED = 0
-
-# File parameters
-DATA_PATH = 'data/CMU-Mocap-csv.zip' # Path to the zip file containing the data
-OUTPUT_PATH = 'data/cmu-numpy.npz' # Path to file where the data should be saved
 
 # Data parameters
 CSV_COLUMNS = ['is_first', 'hips', 'spine', 'left_upper_leg', 'left_lower_leg',
@@ -25,14 +20,67 @@ ROOT_COLUMN = 'hips'         # column label for the body part to use as root
 DROP_COLUMNS = ['is_first', 'none']
 SHOULDER_COLUMNS = ['left_shoulder', 'right_shoulder']
 CSV_DELIMITER = ';'
+
+# Preprocessing Parameters
 NORMALIZE_POSITION = True
 NORMALIZE_ROTATION = True
 
-# Preprocessor Parameters
-SEQUENCE_LENGTH = 64    # The desired sequence length the data should be cut to
-STEP_SIZE = 16          # Number of steps to offset sequences pulled from same animation
-TEST_SET_SIZE = 0.05     # The relative size of the test set
-SPLIT_MODE = 'first'    # first/last
+def parse_args(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        '--data-path',
+        dest='data_path',
+        help='relative path to the zip file containing the data to process',
+        default='data/CMU-Mocap-csv.zip',
+        type=str
+    )
+    parser.add_argument(
+        '--output-path',
+        dest='output_path',
+        help='relative path to save the output',
+        default='data/cmu-numpy_test.npz',
+        type=str
+    )
+    parser.add_argument(
+        '--seq-length',
+        dest='sequence_length',
+        help='how many time steps per sequence',
+        default=64,
+        type=int
+    )
+    parser.add_argument(
+        '--step-size',
+        dest='step_size',
+        help='how many time steps to shift the window between sequences',
+        default=64,
+        type=int
+    )
+    parser.add_argument(
+        '--test-size',
+        dest='test_set_size',
+        help='how large a portion of the data to separate into test set',
+        default=0.1,
+        type=float
+    )
+    parser.add_argument(
+        '--split-mode',
+        dest='split_mode',
+        help='whether to split the test set off first or last',
+        default='last',
+        type=str
+    )
+    parser.add_argument(
+        '--seed',
+        dest='seed',
+        help='seed for initializing tensorflow random number generation',
+        default=0,
+        type=int
+    )
+    if len(argv) == 0:
+        parser.print_help()
+        sys.exit(1)
+    args = parser.parse_args()
+    return args
 
 # Takes a numpy array of shape [N, 3M] and rotates each [1,3] subset based on the given sine and cosine
 def rotateMatrix(matrix, cosine, sine):
@@ -114,56 +162,56 @@ def processDataFrame(dataFrame):
     # Return the processed frame
     return processedFrame
 
-def fileToSequences(zf, filename):
+def fileToSequences(zf, filename, args):
     # Load the contents of the file into a dataframe
     dataFrame = pd.read_csv(zf.open(filename), sep=CSV_DELIMITER, names=CSV_COLUMNS)
     # Initiate list for storing sequences
     sequences = []
     # Skip the file if the sequence is too short overall
     animationLength = dataFrame.count(axis=0)[0]
-    if (animationLength < SEQUENCE_LENGTH):
-        if (DEBUG_LEVEL > 0): print("Animation too short. Skipping...")
+    if animationLength < args.sequence_length:
+        if DEBUG_LEVEL > 0: print("Animation too short. Skipping...")
         return sequences
     # Split dataframe into multiple sequences and process individually
     start = 0
-    end = SEQUENCE_LENGTH-1
+    end = args.sequence_length-1
     while end < animationLength:
         currentFrame = dataFrame.copy().truncate(before=start, after=end)
         # Reindex rows
         currentFrame.index = range(len(currentFrame.index))
-        if (DEBUG_LEVEL > 1): print(currentFrame)
+        if DEBUG_LEVEL > 1: print(currentFrame)
         dataArray = processDataFrame(currentFrame)
-        if (DEBUG_LEVEL > 1): print(dataArray)
+        if DEBUG_LEVEL > 1: print(dataArray)
         # Store the dataframe in the list
         sequences.append(dataArray)
-        start += STEP_SIZE
-        end += STEP_SIZE
+        start += args.step_size
+        end += args.step_size
     return sequences
 
-def dataFirstSplit(zf, files):
+def dataFirstSplit(zf, files, args):
     train_list = []
     test_list = []
-    train_files, test_files = train_test_split(np.array(files), test_size=TEST_SET_SIZE, random_state=SEED)
+    train_files, test_files = train_test_split(np.array(files), test_size=args.test_set_size, random_state=args.seed)
     if DEBUG_LEVEL > 0:
         print("Train files: {}".format(train_files.shape[0]))
         print("Test files: {}".format(test_files.shape[0]))
     for f in train_files:
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
-            if (DEBUG_LEVEL > 0): print(f.filename)
-            sequences = fileToSequences(zf, f.filename)
+            if DEBUG_LEVEL > 0: print(f.filename)
+            sequences = fileToSequences(zf, f.filename, args)
             train_list.extend(sequences)
     for f in test_files:
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
-            if (DEBUG_LEVEL > 0): print(f.filename)
-            sequences = fileToSequences(zf, f.filename)
+            if DEBUG_LEVEL > 0: print(f.filename)
+            sequences = fileToSequences(zf, f.filename, args)
             test_list.extend(sequences)
     train_data = np.array(train_list)
     test_data = np.array(test_list)
     return train_data, test_data
 
-def dataLastSplit(zf, files):
+def dataLastSplit(zf, files, args):
     # Initiate an empty list for storing the data
     data_list = []
     # Loop over all the files in the archive
@@ -171,29 +219,34 @@ def dataLastSplit(zf, files):
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if (DEBUG_LEVEL > 0): print(f.filename)
-            sequences = fileToSequences(filename)
+            sequences = fileToSequences(zf, f.filename, args)
             data_list.extend(sequences)
-    if (DEBUG_LEVEL > 0): print("Total sequences: {}".format(len(data_list)))
+    if DEBUG_LEVEL > 0: print("Total sequences: {}".format(len(data_list)))
     full_data = np.array(data_list)
     if DEBUG_LEVEL > 0: print("Full dataset size: {}".format(full_data.shape[0]))
-    train_data, test_data = train_test_split(full_data, test_size=TEST_SET_SIZE, random_state=SEED)
+    train_data, test_data = train_test_split(full_data, test_size=args.test_set_size, random_state=args.seed)
     return train_data, test_data
 
-def main():
+def main(args):
     # Part1: Load all the csv files from the zip file to a dataframe
     # Load the zip file from the given path
-    zf = zipfile.ZipFile(DATA_PATH)
+    zf = zipfile.ZipFile(args.data_path)
     # Get list of files contained within the archive
     files = zf.infolist()
     train_data, test_data = None, None
-    if SPLIT_MODE == 'last':
-        train_data, test_data = dataLastSplit(zf, files)
-    elif SPLIT_MODE == 'first':
-        train_data, test_data = dataFirstSplit(zf, files)
+    if args.split_mode == 'last':
+        train_data, test_data = dataLastSplit(zf, files, args)
+    elif args.split_mode == 'first':
+        train_data, test_data = dataFirstSplit(zf, files, args)
     print("Train dataset size: {}".format(train_data.shape[0]))
     print("Test dataset size: {}".format(test_data.shape[0]))
     # Save the arrays into a npz file
-    np.savez(OUTPUT_PATH, train_data=train_data, test_data=test_data)
+    np.savez(args.output_path, train_data=train_data, test_data=test_data)
 
 if __name__ == '__main__':
-    main()
+    # Parse command line arguments
+    argv = sys.argv
+    args = parse_args(argv)
+    if DEBUG_LEVEL > 1:
+        print(args)
+    main(args)
