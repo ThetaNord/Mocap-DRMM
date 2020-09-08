@@ -663,7 +663,7 @@ def main(args):
     if not args.no_test:
         testModel(model, test_dataset, sess, args)
     # Sample from the model
-    if args.sample_mode is not "none":
+    if args.sample_mode != "none":
         if args.sample_mode == "extremes":
             showBestAndWorst(model, test_dataset, sess, args)
         else:
