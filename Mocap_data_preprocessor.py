@@ -162,19 +162,19 @@ def processDataFrame(dataFrame):
     # Return the processed frame
     return processedFrame
 
-def fileToSequences(zf, filename, args):
+def fileToSequences(zf, filename, sequence_length, step_size):
     # Load the contents of the file into a dataframe
     dataFrame = pd.read_csv(zf.open(filename), sep=CSV_DELIMITER, names=CSV_COLUMNS)
     # Initiate list for storing sequences
     sequences = []
     # Skip the file if the sequence is too short overall
     animationLength = dataFrame.count(axis=0)[0]
-    if animationLength < args.sequence_length:
+    if animationLength < sequence_length:
         if DEBUG_LEVEL > 0: print("Animation too short. Skipping...")
         return sequences
     # Split dataframe into multiple sequences and process individually
     start = 0
-    end = args.sequence_length-1
+    end = sequence_length-1
     while end < animationLength:
         currentFrame = dataFrame.copy().truncate(before=start, after=end)
         # Reindex rows
@@ -184,8 +184,8 @@ def fileToSequences(zf, filename, args):
         if DEBUG_LEVEL > 1: print(dataArray)
         # Store the dataframe in the list
         sequences.append(dataArray)
-        start += args.step_size
-        end += args.step_size
+        start += step_size
+        end += step_size
     return sequences
 
 def dataFirstSplit(zf, files, args):
@@ -199,13 +199,13 @@ def dataFirstSplit(zf, files, args):
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if DEBUG_LEVEL > 0: print(f.filename)
-            sequences = fileToSequences(zf, f.filename, args)
+            sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size)
             train_list.extend(sequences)
     for f in test_files:
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if DEBUG_LEVEL > 0: print(f.filename)
-            sequences = fileToSequences(zf, f.filename, args)
+            sequences = fileToSequences(zf, f.filename, args.sequence_length, 64)
             test_list.extend(sequences)
     train_data = np.array(train_list)
     test_data = np.array(test_list)
