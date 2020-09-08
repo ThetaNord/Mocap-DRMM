@@ -16,6 +16,10 @@ CSV_COLUMNS = ['is_first', 'hips', 'spine', 'left_upper_leg', 'left_lower_leg',
     'left_foot', 'right_upper_leg', 'right_lower_leg', 'right_foot', 'left_shoulder',
     'left_upper_arm', 'left_lower_arm', 'left_hand', 'left_toes', 'right_toes',
     'right_shoulder', 'right_upper_arm', 'right_lower_arm', 'right_hand', 'head', 'neck', 'none']
+CSV_COLUMNS_REORDERED = ['left_hand', 'right_hand', 'left_lower_arm', 'right_lower_arm',
+    'left_upper_arm', 'right_upper_arm', 'left_shoulder', 'right_shoulder', 'head', 'neck',
+    'spine', 'hips', 'left_upper_leg', 'right_upper_leg', 'left_lower_leg', 'right_lower_leg',
+    'left_foot', 'right_foot', 'left_toes', 'right_toes']
 ROOT_COLUMN = 'hips'         # column label for the body part to use as root
 DROP_COLUMNS = ['is_first', 'none']
 SHOULDER_COLUMNS = ['left_shoulder', 'right_shoulder']
@@ -24,6 +28,7 @@ CSV_DELIMITER = ';'
 # Preprocessing Parameters
 NORMALIZE_POSITION = True
 NORMALIZE_ROTATION = True
+REORDER_COLUMNS = True
 
 def parse_args(argv):
     parser = argparse.ArgumentParser()
@@ -104,6 +109,10 @@ def processDataFrame(dataFrame):
     for column in DROP_COLUMNS:
         if column in dataFrame:
             dataFrame = dataFrame.drop(column, axis=1)
+    if REORDER_COLUMNS:
+        if DEBUG_LEVEL > 0: print("Columns before reorder:\n{}".format(dataFrame.columns))
+        dataFrame = dataFrame[CSV_COLUMNS_REORDERED]
+        if DEBUG_LEVEL > 0: print("Columns after reorder:\n{}".format(dataFrame.columns))
     # Get root column index
     root_index = dataFrame.columns.get_loc(ROOT_COLUMN)*3
     # Get shoulder shoulder indices
