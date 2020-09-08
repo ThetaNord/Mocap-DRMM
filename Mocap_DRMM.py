@@ -182,11 +182,18 @@ def loadDataset(data_path):
     # Load the data from the provided .npz file
     data_array = np.load(Path(data_path))
     # Convert into a Tensorflow dataset
-    train_dataset = tf.data.Dataset.from_tensor_slices(data_array['train_data'])
-    test_dataset = tf.data.Dataset.from_tensor_slices(data_array['test_data'])
-    # Shuffle the dataset
+    train_data = data_array['train_data']
+    test_data = data_array['test_data']
+    #print("Train data shape: {}".format(train_data.shape))
+    train_placeholder = tf.placeholder(train_data.dtype, train_data.shape)
+    test_placeholder = tf.placeholder(test_data.dtype, test_data.shape)
+    train_dataset = tf.data.Dataset.from_tensor_slices(train_placeholder)
+    test_dataset = tf.data.Dataset.from_tensor_slices(test_placeholder)
+    train_dict = {train_placeholder: train_data}
+    test_dict = {test_placeholder: test_data}
+    # Shuffle the training dataset
     train_dataset = train_dataset.shuffle(buffer_size=1000, reshuffle_each_iteration=True).repeat()
-    return train_dataset, test_dataset
+    return train_dataset, test_dataset, train_dict, test_dict
 
 def getTestItems(data_path, indices):
     # Load the data from the provided .npz file
@@ -366,15 +373,16 @@ def createModel(session, train, args):
             initialLearningRate=0.005)
     return model
 
-def testModel(model, test_dataset, session, args):
+def testModel(model, test_dataset, test_dict, session, args):
     # Define timesteps which condition samples
     waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
     samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
     samplingMask = np.zeros_like(samplingInputData)
     samplingMask[:,waypointTimesteps,:] = 1.0
     # Create iterator for the test dataset
-    test_iterator = test_dataset.make_one_shot_iterator()
+    test_iterator = test_dataset.make_initializable_iterator()
     next_element = test_iterator.get_next()
+    session.run(test_iterator.initializer, feed_dict=test_dict)
     # Iterate over the test set to calculate total error
     errors = []
     while True:
@@ -506,15 +514,16 @@ def sampleModel(model, args, condition_sample=None):
     if not args.no_plot:
         plt.show()
 
-def showBestAndWorst(model, test_dataset, session, args):
+def showBestAndWorst(model, test_dataset, test_dict, session, args):
     # Define timesteps which condition samples
     waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
     samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
     samplingMask = np.zeros_like(samplingInputData)
     samplingMask[:,waypointTimesteps,:] = 1.0
     # Create iterator for the test dataset
-    test_iterator = test_dataset.make_one_shot_iterator()
+    test_iterator = test_dataset.make_initializable_iterator()
     next_element = test_iterator.get_next()
+    session.run(test_iterator.initializer, feed_dict=test_dict)
     # Iterate over the test set to calculate errors
     errors = []
     best_samples = []
@@ -621,7 +630,7 @@ def main(args):
     sess = tf.Session()
     tf.set_random_seed(args.seed)
     # Load dataset
-    train_dataset, test_dataset = loadDataset(args.data_path)
+    train_dataset, test_dataset, train_dict, test_dict = loadDataset(args.data_path)
     # Check whether a new model should be trained
     train = True if args.train_mode == "yes" else False
     # If train_mode is auto, check whether a model exists
@@ -640,7 +649,7 @@ def main(args):
         # Initialize dataset iterator
         ITERATOR = train_dataset.make_initializable_iterator()
         next_element = ITERATOR.get_next()
-        sess.run(ITERATOR.initializer)
+        sess.run(ITERATOR.initializer, feed_dict=train_dict)
         # Data-driven init with a random batch
         model.init(getDataBatch(args.batch_size, next_element, sess))
         # Optimize
@@ -661,16 +670,17 @@ def main(args):
         saver.save(sess, args.model_filename)
     # Test model
     if not args.no_test:
-        testModel(model, test_dataset, sess, args)
+        testModel(model, test_dataset, test_dict, sess, args)
     # Sample from the model
     if args.sample_mode != "none":
         if args.sample_mode == "extremes":
-            showBestAndWorst(model, test_dataset, sess, args)
+            showBestAndWorst(model, test_dataset, test_dict, sess, args)
         else:
             if args.shuffle_conditions:
                 test_dataset = test_dataset.shuffle(buffer_size=1000)
-            iterator = test_dataset.make_one_shot_iterator()
-            next_element = iterator.get_next()
+            test_iterator = test_dataset.make_initializable_iterator()
+            next_element = test_iterator.get_next()
+            sess.run(test_iterator.initializer, feed_dict=test_dict)
             sampleModel(model, args, sess.run(next_element))
 
 if __name__ == '__main__':
