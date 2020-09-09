@@ -110,9 +110,9 @@ def processDataFrame(dataFrame):
         if column in dataFrame:
             dataFrame = dataFrame.drop(column, axis=1)
     if REORDER_COLUMNS:
-        if DEBUG_LEVEL > 0: print("Columns before reorder:\n{}".format(dataFrame.columns))
+        if DEBUG_LEVEL > 1: print("Columns before reorder:\n{}".format(dataFrame.columns))
         dataFrame = dataFrame[CSV_COLUMNS_REORDERED]
-        if DEBUG_LEVEL > 0: print("Columns after reorder:\n{}".format(dataFrame.columns))
+        if DEBUG_LEVEL > 1: print("Columns after reorder:\n{}".format(dataFrame.columns))
     # Get root column index
     root_index = dataFrame.columns.get_loc(ROOT_COLUMN)*3
     # Get shoulder shoulder indices
