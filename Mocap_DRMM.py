@@ -12,8 +12,6 @@ import matplotlib.pyplot as plt
 import mpl_toolkits.mplot3d.axes3d as p3
 import matplotlib.animation as animation
 
-ITERATOR = None
-
 def parse_args(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -178,7 +176,7 @@ def animateMultipleSkeletons(t, skeletons, graphs, animation_indices=None):
     for skeleton, graph, index in zip(skeletons, graphs, animation_indices):
         skeleton.animate_skeleton(t, graph, index)
 
-def loadDataset(data_path):
+def loadDataset(data_path, train_batch_size):
     # Load the data from the provided .npz file
     data_array = np.load(Path(data_path))
     # Convert into a Tensorflow dataset
@@ -192,7 +190,7 @@ def loadDataset(data_path):
     train_dict = {train_placeholder: train_data}
     test_dict = {test_placeholder: test_data}
     # Shuffle the training dataset
-    train_dataset = train_dataset.shuffle(buffer_size=1000, reshuffle_each_iteration=True).repeat()
+    train_dataset = train_dataset.shuffle(buffer_size=10000, reshuffle_each_iteration=True).repeat().batch(train_batch_size)
     return train_dataset, test_dataset, train_dict, test_dict
 
 def getTestItems(data_path, indices):
@@ -201,21 +199,6 @@ def getTestItems(data_path, indices):
     items = data_array['test_data'][indices]
     print(items)
     return items
-
-# Function for retrieving a single batch of training data
-def getDataBatch(batch_size, next_element, tf_session):
-    global ITERATOR
-    dataBatch = []
-    for i in range(batch_size):
-        try:
-            data = tf_session.run(next_element)
-        except tf.errors.OutOfRangeError:
-            tf_session.run(ITERATOR.initializer)
-            data = tf_session.run(next_element)
-            print(data)
-        dataBatch.append(data)
-    dataBatch = np.asarray(dataBatch)
-    return dataBatch
 
 def calculateMinimumError(samples, targets, args, masks=None):
     if args.error_mode == "keypoints":
@@ -624,13 +607,12 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
         plt.show()
 
 def main(args):
-    global ITERATOR
     #Init tf
     tf.reset_default_graph()
     sess = tf.Session()
     tf.set_random_seed(args.seed)
     # Load dataset
-    train_dataset, test_dataset, train_dict, test_dict = loadDataset(args.data_path)
+    train_dataset, test_dataset, train_dict, test_dict = loadDataset(args.data_path, args.batch_size)
     # Check whether a new model should be trained
     train = True if args.train_mode == "yes" else False
     # If train_mode is auto, check whether a model exists
@@ -647,15 +629,14 @@ def main(args):
         # Initialize Tensorflow
         tf.global_variables_initializer().run(session=sess)
         # Initialize dataset iterator
-        ITERATOR = train_dataset.make_initializable_iterator()
-        next_element = ITERATOR.get_next()
-        sess.run(ITERATOR.initializer, feed_dict=train_dict)
+        iterator = train_dataset.make_initializable_iterator()
+        next_element = iterator.get_next()
+        sess.run(iterator.initializer, feed_dict=train_dict)
         # Data-driven init with a random batch
-        model.init(getDataBatch(args.batch_size, next_element, sess))
+        model.init(sess.run(next_element))
         # Optimize
         for i in range(args.iteration_count):
-            info = model.train(i/args.iteration_count,
-                            getDataBatch(args.batch_size, next_element, sess))
+            info = model.train(i/args.iteration_count, sess.run(next_element))
             if i % 100 == 0:
                 print("Stage {}/{}, Iteration {}/{}, Loss {:.3f}, learning rate {:.6f}, precision {:.3f}".format(
                     info["stage"],info["nStages"],
