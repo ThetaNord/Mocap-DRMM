@@ -57,6 +57,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--shuffle-buffer',
+        dest='shuffle_buffer',
+        help='the size of the shuffle buffer for the test dataset',
+        default=10000,
+        type=int
+    )
+    parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
         help='how to sample the dataset (conditioned/unconditioned/extremes/none)',
@@ -176,9 +183,9 @@ def animateMultipleSkeletons(t, skeletons, graphs, animation_indices=None):
     for skeleton, graph, index in zip(skeletons, graphs, animation_indices):
         skeleton.animate_skeleton(t, graph, index)
 
-def loadDataset(data_path, train_batch_size):
+def loadDataset(args):
     # Load the data from the provided .npz file
-    data_array = np.load(Path(data_path))
+    data_array = np.load(Path(args.data_path))
     # Convert into a Tensorflow dataset
     train_data = data_array['train_data']
     test_data = data_array['test_data']
@@ -190,7 +197,7 @@ def loadDataset(data_path, train_batch_size):
     train_dict = {train_placeholder: train_data}
     test_dict = {test_placeholder: test_data}
     # Shuffle the training dataset
-    train_dataset = train_dataset.shuffle(buffer_size=10000, reshuffle_each_iteration=True).repeat().batch(train_batch_size)
+    train_dataset = train_dataset.shuffle(buffer_size=args.shuffle_buffer, reshuffle_each_iteration=True).repeat().batch(args.batch_size)
     return train_dataset, test_dataset, train_dict, test_dict
 
 def getTestItems(data_path, indices):
@@ -354,6 +361,24 @@ def createModel(session, train, args):
             lastBlockLayers=6,
             train=train,    #if False, optimization ops will not be created, which saves some time
             initialLearningRate=0.005)
+    elif args.model_type == "supersized":
+        model = DRMMBlockHierarchy(session,
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
+            blockDefs=[
+                {"nClasses":256,"nLayers":4,"kernelSize":11,"stride":2},
+                {"nClasses":256,"nLayers":6,"kernelSize":11,"stride":2},
+                {"nClasses":256,"nLayers":8,"kernelSize":11,"stride":2},
+                {"nClasses":256,"nLayers":10,"kernelSize":11,"stride":2},
+            ],
+            lastBlockClasses=256,
+            lastBlockLayers=10,
+            train=train,    #if False, optimization ops will not be created, which saves some time
+            initialLearningRate=0.004)
     return model
 
 def testModel(model, test_dataset, test_dict, session, args):
@@ -612,7 +637,7 @@ def main(args):
     sess = tf.Session()
     tf.set_random_seed(args.seed)
     # Load dataset
-    train_dataset, test_dataset, train_dict, test_dict = loadDataset(args.data_path, args.batch_size)
+    train_dataset, test_dataset, train_dict, test_dict = loadDataset(args)
     # Check whether a new model should be trained
     train = True if args.train_mode == "yes" else False
     # If train_mode is auto, check whether a model exists
