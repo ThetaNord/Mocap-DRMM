@@ -379,6 +379,24 @@ def createModel(session, train, args):
             lastBlockLayers=10,
             train=train,    #if False, optimization ops will not be created, which saves some time
             initialLearningRate=0.004)
+    elif args.model_type == "all-fives":
+        model = DRMMBlockHierarchy(session,
+            inputs=dataStream(
+                dataType="continuous",
+                shape=[None,args.sequence_length,args.data_dimension],
+                useGaussianPrior=True,
+                useBoxConstraints=True
+            ),
+            blockDefs=[
+                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
+                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
+                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
+                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
+            ],
+            lastBlockClasses=256,
+            lastBlockLayers=5,
+            train=train,    #if False, optimization ops will not be created, which saves some time
+            initialLearningRate=0.005)
     return model
 
 def testModel(model, test_dataset, test_dict, session, args):
