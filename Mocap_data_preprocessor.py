@@ -243,14 +243,18 @@ def main(args):
     # Get list of files contained within the archive
     files = zf.infolist()
     train_data, test_data = None, None
+    validation_data = np.zeros(1)
     if args.split_mode == 'last':
         train_data, test_data = dataLastSplit(zf, files, args)
-    elif args.split_mode == 'first':
+    elif args.split_mode == 'first' or args.split_mode == 'both':
         train_data, test_data = dataFirstSplit(zf, files, args)
+    if args.split_mode == 'both':
+        train_data, validation_data = train_test_split(train_data, test_size=test_data.shape[0], random_state=args.seed)
     print("Train dataset size: {}".format(train_data.shape[0]))
+    print("Validation dataset size: {}".format(validation_data.shape[0]))
     print("Test dataset size: {}".format(test_data.shape[0]))
     # Save the arrays into a npz file
-    np.savez(args.output_path, train_data=train_data, test_data=test_data)
+    np.savez(args.output_path, train_data=train_data, validation_data=validation_data, test_data=test_data)
 
 if __name__ == '__main__':
     # Parse command line arguments
