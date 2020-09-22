@@ -66,8 +66,15 @@ def parse_args(argv):
     parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
-        help='how to sample the dataset (conditioned/unconditioned/extremes/none)',
+        help='how to sample the dataset (unconditioned/conditioned/extremes/none)',
         default='unconditioned',
+        type=str
+    )
+    parser.add_argument(
+        '--sample-set',
+        dest='sample_set',
+        help='which dataset to use in sampling (test/validation/train)',
+        default='test',
         type=str
     )
     parser.add_argument(
@@ -100,7 +107,7 @@ def parse_args(argv):
     parser.add_argument(
         '--train-mode',
         dest='train_mode',
-        help='whether to train a new model or not (yes/no/auto)',
+        help='whether to train a new model or not (auto/yes/no)',
         default='auto',
         type=str
     )
@@ -112,10 +119,11 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
-        '--no-test',
-        dest='no_test',
-        help='skip testing the network against the test set',
-        action='store_true'
+        '--test-mode',
+        dest='test_mode',
+        help='how to test the model (test/validation/none)',
+        default='test',
+        type=str
     )
     parser.add_argument(
         '--error-mode',
@@ -188,17 +196,20 @@ def loadDataset(args):
     data_array = np.load(Path(args.data_path))
     # Convert into a Tensorflow dataset
     train_data = data_array['train_data']
+    validation_data = data_array['validation_data']
     test_data = data_array['test_data']
-    #print("Train data shape: {}".format(train_data.shape))
     train_placeholder = tf.placeholder(train_data.dtype, train_data.shape)
+    validation_placeholder = tf.placeholder(validation_data.dtype, validation_data.shape)
     test_placeholder = tf.placeholder(test_data.dtype, test_data.shape)
     train_dataset = tf.data.Dataset.from_tensor_slices(train_placeholder)
+    validation_dataset = tf.data.Dataset.from_tensor_slices(validation_placeholder)
     test_dataset = tf.data.Dataset.from_tensor_slices(test_placeholder)
     train_dict = {train_placeholder: train_data}
+    validation_dict = {validation_placeholder: validation_data}
     test_dict = {test_placeholder: test_data}
     # Shuffle the training dataset
     train_dataset = train_dataset.shuffle(buffer_size=args.shuffle_buffer, reshuffle_each_iteration=True).repeat().batch(args.batch_size)
-    return train_dataset, test_dataset, train_dict, test_dict
+    return train_dataset, validation_dataset, test_dataset, train_dict, validation_dict, test_dict
 
 def getTestItems(data_path, indices):
     # Load the data from the provided .npz file
@@ -655,7 +666,7 @@ def main(args):
     sess = tf.Session()
     tf.set_random_seed(args.seed)
     # Load dataset
-    train_dataset, test_dataset, train_dict, test_dict = loadDataset(args)
+    train_dataset, validation_dataset, test_dataset, train_dict, validation_dict, test_dict = loadDataset(args)
     # Check whether a new model should be trained
     train = True if args.train_mode == "yes" else False
     # If train_mode is auto, check whether a model exists
@@ -693,18 +704,25 @@ def main(args):
             model_path.mkdir(parents=True, exist_ok=True)
         saver.save(sess, args.model_filename)
     # Test model
-    if not args.no_test:
-        testModel(model, test_dataset, test_dict, sess, args)
+    if args.test_mode != 'none':
+        if args.test_mode == 'test':
+            testModel(model, test_dataset, test_dict, sess, args)
+        if args.test_mode == 'validation':
+            testModel(model, validation_dataset, validation_dict, sess, args)
     # Sample from the model
     if args.sample_mode != "none":
+        sample_dataset, sample_dict = None, None
+        if args.sample_set == 'train': sample_dataset, sample_dict = train_dataset, train_dict
+        elif args.sample_set == 'validation': sample_dataset, sample_dict = validation_dataset, validation_dict
+        elif args.sample_set == 'test': sample_dataset, sample_dict = test_dataset, test_dict
         if args.sample_mode == "extremes":
-            showBestAndWorst(model, test_dataset, test_dict, sess, args)
+            showBestAndWorst(model, sample_dataset, sample_dict, sess, args)
         else:
             if args.shuffle_conditions:
-                test_dataset = test_dataset.shuffle(buffer_size=1000)
-            test_iterator = test_dataset.make_initializable_iterator()
-            next_element = test_iterator.get_next()
-            sess.run(test_iterator.initializer, feed_dict=test_dict)
+                sample_dataset = sample_dataset.shuffle(buffer_size=1000)
+            sample_iterator = sample_dataset.make_initializable_iterator()
+            next_element = sample_iterator.get_next()
+            sess.run(sample_iterator.initializer, feed_dict=sample_dict)
             sampleModel(model, args, sess.run(next_element))
 
 if __name__ == '__main__':
