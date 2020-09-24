@@ -161,12 +161,13 @@ def parse_args(argv):
 class Skeleton:
 
     def __init__(self, joint_array):
-        self.joint_list = ['hips', 'spine', 'left_upper_leg', 'left_lower_leg',
-            'left_foot', 'right_upper_leg', 'right_lower_leg', 'right_foot',
-            'left_shoulder', 'left_upper_arm', 'left_lower_arm', 'left_hand',
-            'left_toes', 'right_toes', 'right_shoulder', 'right_upper_arm',
-            'right_lower_arm', 'right_hand', 'head', 'neck']
+        self.joint_list = ['left_hand', 'right_hand', 'left_lower_arm',
+            'right_lower_arm', 'left_upper_arm', 'right_upper_arm',
+            'left_shoulder', 'right_shoulder', 'head', 'neck', 'spine', 'hips',
+            'left_upper_leg', 'right_upper_leg', 'left_lower_leg', 'right_lower_leg',
+            'left_foot', 'right_foot', 'left_toes', 'right_toes']
         self.joint_sequence = joint_array
+        self.root_node = 'hips'
 
     def get_joint_child(self, joint_name):
         return None
@@ -181,15 +182,19 @@ class Skeleton:
         zs = self.joint_sequence[animation_index, t, 2::3]
         return xs, ys, zs
 
-    def animate_skeleton(self, t, graph, animation_index=0):
+    def animate_skeleton(self, t, graph, axis, animation_index=0):
         xs, ys, zs = self.get_all_joint_positions(t, animation_index)
         graph._offsets3d = (xs, zs, ys)
+        if axis != None:
+            origin = self.get_joint_position(self.root_node, t, animation_index)
+            axis.set_xlim3d([origin[0]+1.0, origin[0]-1.0])
+            axis.set_ylim3d([origin[2]+1.0, origin[2]-1.0])
 
-def animateMultipleSkeletons(t, skeletons, graphs, animation_indices=None):
+def animateMultipleSkeletons(t, skeletons, graphs, axes, animation_indices=None):
     if animation_indices is None:
         animation_indices = [0 for s in skeletons]
-    for skeleton, graph, index in zip(skeletons, graphs, animation_indices):
-        skeleton.animate_skeleton(t, graph, index)
+    for skeleton, graph, axis, index in zip(skeletons, graphs, axes, animation_indices):
+        skeleton.animate_skeleton(t, graph, axis, index)
 
 def loadDataset(args):
     # Load the data from the provided .npz file
@@ -489,6 +494,7 @@ def sampleModel(model, args, condition_sample=None):
     ax1, ax2 = None, None
     skeletons = []
     graphs = []
+    axes = []
     animation_indices = [0]
     if args.sample_mode == "unconditioned":
         # Create a single subplot
@@ -509,6 +515,7 @@ def sampleModel(model, args, condition_sample=None):
         graph = ax1.scatter(xs, zs, ys)
         skeletons.append(skeleton)
         graphs.append(graph)
+        axes.append(ax1)
     elif args.sample_mode == "conditioned":
         # Make the plot wider
         fig.set_figwidth(12)
@@ -542,10 +549,11 @@ def sampleModel(model, args, condition_sample=None):
         graph3 = ax2.scatter(xs, zs, ys, c='red', alpha=0.2)
         skeletons = [condition_skeleton, skeleton, waypoint_skeleton]
         graphs = [graph1, graph2, graph3]
+        axes = [ax1, ax2, None]
         animation_indices = [0, best_index, 0]
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
-                                        64, fargs=(skeletons, graphs, animation_indices), interval=33, blit=False)
+                                        64, fargs=(skeletons, graphs, axes, animation_indices), interval=33, blit=False)
     skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
@@ -620,6 +628,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     fig = plt.figure(figsize=(28, 10), dpi=100)
     skeletons = []
     graphs = []
+    axes = []
     animation_indices = [0 for x in range(10)]
     for idx, sample_skeleton, target_skeleton, waypoint_skeleton in zip(range(10), sample_skeletons, target_skeletons, waypoints_skeletons):
         # Create subplots
@@ -645,15 +654,18 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
         xs, ys, zs = target_skeleton.get_all_joint_positions(0)
         graphs.append(ax1.scatter(xs, zs, ys))
         skeletons.append(target_skeleton)
+        axes.append(ax1)
         xs, ys, zs = sample_skeleton.get_all_joint_positions(0)
         graphs.append(ax2.scatter(xs, zs, ys))
         skeletons.append(sample_skeleton)
+        axes.append(ax2)
         xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
         graphs.append(ax2.scatter(xs, zs, ys, c='red', alpha=0.2))
         skeletons.append(waypoint_skeleton)
+        axes.append(None)
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
-                                        64, fargs=(skeletons, graphs), interval=33, blit=False)
+                                        64, fargs=(skeletons, graphs, axes), interval=33, blit=False)
     # Save animation
     skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
     # Show plot
