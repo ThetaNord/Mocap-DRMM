@@ -92,6 +92,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--sample-out',
+        dest='sample_outfile',
+        help='filename for outputting the sample animation file',
+        default='animation.gif',
+        type=str
+    )
+    parser.add_argument(
         '--shuffle-conditions',
         dest='shuffle_conditions',
         help='if this flag is set, test set is shuffled before picking conditioning sample',
@@ -554,7 +561,7 @@ def sampleModel(model, args, condition_sample=None):
     # Create the Animation object
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                         64, fargs=(skeletons, graphs, axes, animation_indices), interval=33, blit=False)
-    skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
+    skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
         plt.show()
@@ -667,7 +674,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                         64, fargs=(skeletons, graphs, axes), interval=33, blit=False)
     # Save animation
-    skeleton_animation.save('animations/animation.gif', writer='imagemagick', fps=30)
+    skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
         plt.show()
