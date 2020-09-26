@@ -220,7 +220,7 @@ def loadDataset(args):
     validation_dict = {validation_placeholder: validation_data}
     test_dict = {test_placeholder: test_data}
     # Shuffle the training dataset
-    train_dataset = train_dataset.shuffle(buffer_size=args.shuffle_buffer, reshuffle_each_iteration=True).repeat().batch(args.batch_size)
+    train_dataset = train_dataset.shuffle(buffer_size=args.shuffle_buffer, seed=args.seed, reshuffle_each_iteration=True).repeat().batch(args.batch_size)
     return train_dataset, validation_dataset, test_dataset, train_dict, validation_dict, test_dict
 
 def getTestItems(data_path, indices):
@@ -738,7 +738,7 @@ def main(args):
             showBestAndWorst(model, sample_dataset, sample_dict, sess, args)
         else:
             if args.shuffle_conditions:
-                sample_dataset = sample_dataset.shuffle(buffer_size=1000)
+                sample_dataset = sample_dataset.shuffle(buffer_size=1000, seed=args.seed)
             sample_iterator = sample_dataset.make_initializable_iterator()
             next_element = sample_iterator.get_next()
             sess.run(sample_iterator.initializer, feed_dict=sample_dict)
