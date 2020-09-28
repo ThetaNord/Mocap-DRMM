@@ -135,8 +135,15 @@ def parse_args(argv):
     parser.add_argument(
         '--error-mode',
         dest='error_mode',
-        help='how to calculate error in sampling and testing (all/keypoints)',
+        help='for what points to calculate error in sampling and testing (all/keypoints)',
         default='all',
+        type=str
+    )
+    parser.add_argument(
+        '--error-calculation',
+        dest='error_calculation',
+        help='how to calculate error in sampling and testing (L1/L2)',
+        default='L2',
         type=str
     )
     parser.add_argument(
@@ -237,10 +244,14 @@ def calculateMinimumError(samples, targets, args, masks=None):
             return
         samples = np.multiply(masks, samples)
         targets = np.multiply(masks, targets)
-    errors = np.sum(np.square(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(10, args.sequence_length*args.data_dimension), axis=1)
+    errors = np.zeros(1)
+    if args.error_calculation == 'L1':
+        errors = np.sum(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff]).reshape(args.sample_cutoff, args.sequence_length*args.data_dimension), axis=1)
+    elif args.error_calculation == 'L2':
+        errors = np.sum(np.square(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(args.sample_cutoff, args.sequence_length*args.data_dimension), axis=1)
     min_error = np.min(errors)
     min_index = np.where(errors == min_error)[0][0]
-    return min_error, min_index
+    return min_error, min_index, errors
 
 def createModel(session, train, args):
     model = None
@@ -447,7 +458,7 @@ def testModel(model, test_dataset, test_dict, session, args):
             samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                     temperature=args.temperature, sorted=True)
             # Calculate the error
-            min_error, _ = calculateMinimumError(samples, samplingInputData, args, samplingMask)
+            min_error, _, _ = calculateMinimumError(samples, samplingInputData, args, samplingMask)
             if args.debug:
                 print("Minimum error: {}".format(min_error))
             errors.append(min_error)
@@ -479,14 +490,9 @@ def sampleModel(model, args, condition_sample=None):
         samplingMask[:,waypointTimesteps,:] = 1.0
         samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                 temperature=args.temperature, sorted=True)
-        square_errors = np.square(np.subtract(samples, samplingInputData))
-        if args.error_mode == "keypoints":
-            square_errors = np.multiply(samplingMask, square_errors)
-        sample_errors = np.sum(square_errors.reshape(args.sample_batch_size, args.sequence_length*args.data_dimension), axis=1)
-        min_error = np.min(sample_errors[:args.sample_cutoff])
-        best_index = np.where(sample_errors[:args.sample_cutoff] == min_error)[0][0]
+        min_error, best_index, sample_errors = calculateMinimumError(samples, samplingInputData, args, samplingMask)
         if args.debug:
-            print("Most likely sample errors:\n{}".format(sample_errors[:args.sample_cutoff]))
+            print("Most likely sample errors:\n{}".format(sample_errors))
             print("Smallest error: {}".format(min_error))
             print("Best index: {}".format(best_index))
     # Create a skeleton with the given samples
@@ -595,7 +601,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
             samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                     temperature=args.temperature, sorted=True)
             # Calculate the error
-            min_error, min_index = calculateMinimumError(samples, samplingInputData, args, samplingMask)
+            min_error, min_index, _ = calculateMinimumError(samples, samplingInputData, args, samplingMask)
             if args.debug:
                 print("Minimum error: {}".format(min_error))
                 print("Minimum error index: {}".format(min_index))
