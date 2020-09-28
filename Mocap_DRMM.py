@@ -246,7 +246,7 @@ def calculateMinimumError(samples, targets, args, masks=None):
         targets = np.multiply(masks, targets)
     errors = np.zeros(1)
     if args.error_calculation == 'L1':
-        errors = np.sum(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff]).reshape(args.sample_cutoff, args.sequence_length*args.data_dimension), axis=1)
+        errors = np.sum(np.absolute(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(args.sample_cutoff, args.sequence_length*args.data_dimension), axis=1)
     elif args.error_calculation == 'L2':
         errors = np.sum(np.square(np.subtract(samples[:args.sample_cutoff], targets[:args.sample_cutoff])).reshape(args.sample_cutoff, args.sequence_length*args.data_dimension), axis=1)
     min_error = np.min(errors)
