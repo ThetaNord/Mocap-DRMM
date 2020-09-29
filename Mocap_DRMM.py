@@ -266,7 +266,6 @@ def getKeyFrameTimesteps(sequence_length, keyframe_count):
         next_frame = i*sequence_length//keyframe_count
         timesteps.append(next_frame)
     timesteps.append(sequence_length-1)
-    print(timesteps)
     return timesteps
 
 def createModel(session, train, args):
