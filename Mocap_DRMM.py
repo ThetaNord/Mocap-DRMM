@@ -64,6 +64,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--keyframe-count',
+        dest='keyframe_count',
+        help='how many keyframes (besides first frame) should be used',
+        default=2,
+        type=int
+    )
+    parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
         help='how to sample the dataset (unconditioned/conditioned/extremes/none)',
@@ -433,9 +440,19 @@ def createModel(session, train, args):
             initialLearningRate=0.005)
     return model
 
+def getKeyFrameTimesteps(sequence_length, keyframe_count):
+    timesteps = [0]
+    for i in range(1,keyframe_count):
+        next_frame = i*sequence_length//keyframe_count
+        timesteps.append(next_frame)
+    timesteps.append(sequence_length-1)
+    print(timesteps)
+    return timesteps
+
 def testModel(model, test_dataset, test_dict, session, args):
     # Define timesteps which condition samples
-    waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+    waypointTimesteps = getKeyFrameTimesteps(args.sequence_length, args.keyframe_count)
+    #waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
     samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
     samplingMask = np.zeros_like(samplingInputData)
     samplingMask[:,waypointTimesteps,:] = 1.0
@@ -480,11 +497,15 @@ def sampleModel(model, args, condition_sample=None):
         if args.debug: print(samples)
     elif args.sample_mode == "conditioned":
         if condition_sample is None:
-            print("Condition sample required!")
+            print("ERROR: Condition sample required!")
             return
-        waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
-        waypoint_sample[:args.sequence_length//2] = condition_sample[args.sequence_length//2]
-        waypoint_sample[args.sequence_length//2:] = condition_sample[-1]
+        waypointTimesteps = getKeyFrameTimesteps(args.sequence_length, args.keyframe_count)
+        #waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+        #waypoint_sample[:args.sequence_length//2] = condition_sample[args.sequence_length//2]
+        #waypoint_sample[args.sequence_length//2:] = condition_sample[-1]
+        for i in range(1,len(waypointTimesteps)):
+            waypoint_sample[waypointTimesteps[i-1]:waypointTimesteps[i]] = condition_sample[waypointTimesteps[i]]
+        waypoint_sample[waypointTimesteps[-2]:] = condition_sample[-1]
         samplingInputData = np.resize(condition_sample, (args.sample_batch_size, args.sequence_length, args.data_dimension))
         samplingMask = np.zeros_like(samplingInputData)
         samplingMask[:,waypointTimesteps,:] = 1.0
@@ -574,7 +595,8 @@ def sampleModel(model, args, condition_sample=None):
 
 def showBestAndWorst(model, test_dataset, test_dict, session, args):
     # Define timesteps which condition samples
-    waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
+    waypointTimesteps = getKeyFrameTimesteps(args.sequence_length, args.keyframe_count)
+    #waypointTimesteps = [0,args.sequence_length//2,args.sequence_length-1]
     samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
     samplingMask = np.zeros_like(samplingInputData)
     samplingMask[:,waypointTimesteps,:] = 1.0
