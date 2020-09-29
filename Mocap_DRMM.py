@@ -78,6 +78,13 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
+        '--keyframe-calculation-interval',
+        dest='keyframe_calculation_interval',
+        help='if calculating keframes, how many frames backwards and forwards to look',
+        default=2,
+        type=int
+    )
+    parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
         help='how to sample the dataset (unconditioned/conditioned/extremes/none)',
@@ -272,7 +279,7 @@ def getKeyFrameTimesteps(animation, args):
     if args.keyframe_mode == 'fixed':
         timesteps = getFixedKeyframes(args.sequence_length, args.keyframe_count)
     elif args.keyframe_mode == 'calculated':
-        timesteps = calculateKeyFrames(animation, args.keyframe_count)
+        timesteps = calculateKeyFrames(animation, args.keyframe_count, args.keyframe_calculation_interval)
     if args.debug:
         print(timesteps)
     return timesteps
@@ -286,13 +293,13 @@ def getFixedKeyframes(sequence_length, keyframe_count):
     return timesteps
 
 # Calculate the best keyframes for a sequence based on change rates
-def calculateKeyFrames(sequence, keyframe_count):
+def calculateKeyFrames(sequence, keyframe_count, interval):
     change_rates = np.zeros(sequence.shape[0])
     # Calculate change rates for each frame except first and last
-    for i in range(1,sequence.shape[0]-1):
+    for i in range(interval,sequence.shape[0]-interval):
         current_frame = sequence[i]
-        prev_changes = np.subtract(current_frame, sequence[i-1])
-        next_changes = np.subtract(current_frame, sequence[i+1])
+        prev_changes = np.subtract(current_frame, sequence[i-interval])
+        next_changes = np.subtract(current_frame, sequence[i+interval])
         total_changes = np.absolute(prev_changes + next_changes)
         change_rates[i] = np.sum(total_changes)
     print(change_rates)
