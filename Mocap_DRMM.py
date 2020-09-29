@@ -71,6 +71,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--keyframe-mode',
+        dest='keyframe_mode',
+        help='how to determine keyframes (fixed/calculated)',
+        default='fixed',
+        type=str
+    )
+    parser.add_argument(
         '--sample-mode',
         dest='sample_mode',
         help='how to sample the dataset (unconditioned/conditioned/extremes/none)',
@@ -260,12 +267,39 @@ def calculateMinimumError(samples, targets, args, masks=None):
     min_index = np.where(errors == min_error)[0][0]
     return min_error, min_index, errors
 
-def getKeyFrameTimesteps(sequence_length, keyframe_count):
+def getKeyFrameTimesteps(animation, args):
+    timesteps = None
+    if args.keyframe_mode == 'fixed':
+        timesteps = getFixedKeyframes(args.sequence_length, args.keyframe_count)
+    elif args.keyframe_mode == 'calculated':
+        timesteps = calculateKeyFrames(animation, args.keyframe_count)
+    if args.debug:
+        print(timesteps)
+    return timesteps
+
+def getFixedKeyframes(sequence_length, keyframe_count):
     timesteps = [0]
     for i in range(1,keyframe_count):
         next_frame = i*sequence_length//keyframe_count
         timesteps.append(next_frame)
     timesteps.append(sequence_length-1)
+    return timesteps
+
+# Calculate the best keyframes for a sequence based on change rates
+def calculateKeyFrames(sequence, keyframe_count):
+    change_rates = np.zeros(sequence.shape[0])
+    # Calculate change rates for each frame except first and last
+    for i in range(1,sequence.shape[0]-1):
+        current_frame = sequence[i]
+        prev_changes = np.subtract(current_frame, sequence[i-1])
+        next_changes = np.subtract(current_frame, sequence[i+1])
+        total_changes = np.absolute(prev_changes + next_changes)
+        change_rates[i] = np.sum(total_changes)
+    print(change_rates)
+    timesteps = np.zeros(1)
+    idx = np.argpartition(change_rates, -keyframe_count)
+    timesteps = np.sort(np.concatenate((timesteps, idx[-(keyframe_count-1):])))
+    timesteps = np.append(timesteps, [sequence.shape[0]-1]).astype(int)
     return timesteps
 
 def createModel(session, train, args):
@@ -449,11 +483,6 @@ def createModel(session, train, args):
     return model
 
 def testModel(model, test_dataset, test_dict, session, args):
-    # Define timesteps which condition samples
-    waypointTimesteps = getKeyFrameTimesteps(args.sequence_length, args.keyframe_count)
-    samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
-    samplingMask = np.zeros_like(samplingInputData)
-    samplingMask[:,waypointTimesteps,:] = 1.0
     # Create iterator for the test dataset
     test_iterator = test_dataset.make_initializable_iterator()
     next_element = test_iterator.get_next()
@@ -464,7 +493,11 @@ def testModel(model, test_dataset, test_dict, session, args):
         try:
             # Get next element from test set, resize to sampling input
             target = session.run(next_element)
-            samplingInputData = np.resize(target, samplingInputData.shape)
+            samplingInputData = np.resize(target, [args.sample_batch_size, args.sequence_length, args.data_dimension])
+            # Define timesteps which condition samples
+            waypointTimesteps = getKeyFrameTimesteps(target, args)
+            samplingMask = np.zeros_like(samplingInputData)
+            samplingMask[:,waypointTimesteps,:] = 1.0
             if args.debug:
                 print("First input sequence: {}".format(samplingInputData[0]))
                 print("Last input sequence: {}".format(samplingInputData[-1]))
@@ -497,7 +530,8 @@ def sampleModel(model, args, condition_sample=None):
         if condition_sample is None:
             print("ERROR: Condition sample required!")
             return
-        waypointTimesteps = getKeyFrameTimesteps(args.sequence_length, args.keyframe_count)
+        waypointTimesteps = getKeyFrameTimesteps(condition_sample, args)
+        #waypointTimesteps = calculateKeyFrames(condition_sample, args.keyframe_count)
         for i in range(1,len(waypointTimesteps)):
             waypoint_sample[waypointTimesteps[i-1]:waypointTimesteps[i]] = condition_sample[waypointTimesteps[i]]
         waypoint_sample[waypointTimesteps[-2]:] = condition_sample[-1]
@@ -602,13 +636,18 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     errors = []
     best_samples = []
     targets = []
+    waypoints = []
     while True:
-    #for i in range(20):
         try:
             # Get next element from test set, resize to sampling input
             target = session.run(next_element)
             targets.append(target)
-            samplingInputData = np.resize(target, samplingInputData.shape)
+            samplingInputData = np.resize(target, [args.sample_batch_size, args.sequence_length, args.data_dimension])
+            # Define timesteps which condition samples
+            waypointTimesteps = getKeyFrameTimesteps(target, args)
+            waypoints.append(waypointTimesteps)
+            samplingMask = np.zeros_like(samplingInputData)
+            samplingMask[:,waypointTimesteps,:] = 1.0
             if args.debug:
                 print("First input sequence: {}".format(samplingInputData[0]))
                 print("Last input sequence: {}".format(samplingInputData[-1]))
@@ -645,13 +684,14 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     target_skeletons = [Skeleton(np.array([target])) for target in targets[bw_indices]]
     # Create skeletons for keypoint sequences
     waypoints_skeletons = []
-    for target in targets[bw_indices]:
+    for target, waypointTimesteps in zip(targets[bw_indices], waypoints[bw_indices]):
         if args.debug:
             print("Target array: {}".format(target))
             print("Target array shape: {}".format(target.shape))
         waypoint_sample = np.zeros_like(target)
-        waypoint_sample[:args.sequence_length//2] = target[args.sequence_length//2]
-        waypoint_sample[args.sequence_length//2:] = target[-1]
+        for i in range(1,len(waypointTimesteps)):
+            waypoint_sample[waypointTimesteps[i-1]:waypointTimesteps[i]] = target[waypointTimesteps[i]]
+        waypoint_sample[waypointTimesteps[-2]:] = target[-1]
         waypoints_skeletons.append(Skeleton(np.array([waypoint_sample])))
     # Visualize
     fig = plt.figure(figsize=(28, 10), dpi=100)
