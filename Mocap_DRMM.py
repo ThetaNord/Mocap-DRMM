@@ -304,7 +304,7 @@ def calculateKeyFrames(sequence, keyframe_count, interval):
         change_rates[i] = np.sum(total_changes)
     print(change_rates)
     timesteps = np.zeros(1)
-    idx = np.argpartition(change_rates, -keyframe_count)
+    idx = np.argpartition(change_rates, -keyframe_count-1)
     timesteps = np.sort(np.concatenate((timesteps, idx[-(keyframe_count-1):])))
     timesteps = np.append(timesteps, [sequence.shape[0]-1]).astype(int)
     return timesteps
