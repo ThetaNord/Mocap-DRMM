@@ -689,11 +689,6 @@ def sampleModel(model, args, condition_sample=None):
         plt.show()
 
 def showBestAndWorst(model, test_dataset, test_dict, session, args):
-    # Define timesteps which condition samples
-    waypointTimesteps = getKeyFrameTimesteps(args.sequence_length, args.keyframe_count)
-    samplingInputData = np.zeros([args.sample_batch_size, args.sequence_length, args.data_dimension])
-    samplingMask = np.zeros_like(samplingInputData)
-    samplingMask[:,waypointTimesteps,:] = 1.0
     # Create iterator for the test dataset
     test_iterator = test_dataset.make_initializable_iterator()
     next_element = test_iterator.get_next()
@@ -763,6 +758,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     fig = plt.figure(figsize=(28, 10), dpi=100)
     skeletons = []
     graphs = []
+    line_list = []
     axes = []
     animation_indices = [0 for x in range(10)]
     for idx, sample_skeleton, target_skeleton, waypoint_skeleton in zip(range(10), sample_skeletons, target_skeletons, waypoints_skeletons):
@@ -785,22 +781,39 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
         ax2.set_zlim3d([0.0, 2.0])
         ax2.set_zlabel('Y')
         ax2.set_title('Sample')
-        # Plot initial joint positions
-        xs, ys, zs = target_skeleton.get_all_joint_positions(0)
-        graphs.append(ax1.scatter(xs, zs, ys))
-        skeletons.append(target_skeleton)
-        axes.append(ax1)
-        xs, ys, zs = sample_skeleton.get_all_joint_positions(0)
-        graphs.append(ax2.scatter(xs, zs, ys))
-        skeletons.append(sample_skeleton)
-        axes.append(ax2)
-        xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
-        graphs.append(ax2.scatter(xs, zs, ys, c='red', alpha=0.2))
-        skeletons.append(waypoint_skeleton)
-        axes.append(None)
+        if args.animation_type == 'scatter':
+            # Plot initial joint positions
+            xs, ys, zs = target_skeleton.get_all_joint_positions(0)
+            graphs.append(ax1.scatter(xs, zs, ys))
+            skeletons.append(target_skeleton)
+            axes.append(ax1)
+            xs, ys, zs = sample_skeleton.get_all_joint_positions(0)
+            graphs.append(ax2.scatter(xs, zs, ys))
+            skeletons.append(sample_skeleton)
+            axes.append(ax2)
+            xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
+            graphs.append(ax2.scatter(xs, zs, ys, c='red', alpha=0.2))
+            skeletons.append(waypoint_skeleton)
+            axes.append(None)
+        elif args.animation_type == 'skeleton':
+            for s, ax in zip([target_skeleton, sample_skeleton, waypoint_skeleton], [ax1, ax2, ax2]):
+                lines = []
+                for x in s.joint_list:
+                    line, = ax.plot([],[],[], color=s.color, alpha=s.alpha)
+                    lines.append(line)
+                line_list.append(lines)
+                skeletons.append(s)
+            axes.append(ax1)
+            axes.append(ax2)
+            axes.append(None)
     # Create the Animation object
-    skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
+    skeleton_animation = None
+    if args.animation_type == 'scatter':
+        skeleton_animation = animation.FuncAnimation(fig, animateMultipleScatters,
                                         64, fargs=(skeletons, graphs, axes), interval=33, blit=False)
+    elif args.animation_type == 'skeleton':
+        skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeleton,
+                                            64, fargs=(skeletons, line_list, axes), interval=33, blit=False)
     # Save animation
     skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
     # Show plot
