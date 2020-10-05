@@ -729,6 +729,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     errors = np.array(errors)
     samples = np.array(best_samples)
     targets = np.array(targets)
+    waypoints = np.array(waypoints)
     best_example_indices = np.argpartition(errors, 170)[:5]
     worst_example_indices = np.argpartition(errors, -170)[-5:]
     bw_indices = np.concatenate((best_example_indices, worst_example_indices))
