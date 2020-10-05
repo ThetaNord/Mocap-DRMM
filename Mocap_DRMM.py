@@ -813,7 +813,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
         skeleton_animation = animation.FuncAnimation(fig, animateMultipleScatters,
                                         64, fargs=(skeletons, graphs, axes), interval=33, blit=False)
     elif args.animation_type == 'skeleton':
-        skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeleton,
+        skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                             64, fargs=(skeletons, line_list, axes), interval=33, blit=False)
     # Save animation
     skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
