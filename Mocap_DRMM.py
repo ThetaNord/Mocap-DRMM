@@ -168,6 +168,13 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
+        '--animation-type',
+        dest='animation_type',
+        help='how to animate samples (skeleton/scatter)',
+        default='skeleton',
+        type=str
+    )
+    parser.add_argument(
         '--no-plot',
         dest='no_plot',
         help='do not display plots for animation samples',
@@ -195,14 +202,25 @@ def parse_args(argv):
 #from .visualization import Skeleton
 class Skeleton:
 
-    def __init__(self, joint_array):
+    def __init__(self, joint_array, color='tab:blue', alpha=0.8):
         self.joint_list = ['left_hand', 'right_hand', 'left_lower_arm',
             'right_lower_arm', 'left_upper_arm', 'right_upper_arm',
             'left_shoulder', 'right_shoulder', 'head', 'neck', 'spine', 'hips',
             'left_upper_leg', 'right_upper_leg', 'left_lower_leg', 'right_lower_leg',
             'left_foot', 'right_foot', 'left_toes', 'right_toes']
+        self.connected_joints = [('hips', 'spine'), ('hips', 'left_upper_leg'),
+            ('hips', 'right_upper_leg'), ('left_upper_leg', 'left_lower_leg'),
+            ('left_lower_leg', 'left_foot'),  ('left_foot', 'left_toes'),
+            ('right_upper_leg', 'right_lower_leg'), ('right_lower_leg', 'right_foot'),
+            ('right_foot', 'right_toes'), ('spine', 'neck'), ('neck', 'head'),
+            ('neck', 'left_upper_arm'), ('left_upper_arm', 'left_lower_arm'),
+            ('left_lower_arm', 'left_hand'), ('neck', 'right_upper_arm'),
+            ('right_upper_arm', 'right_lower_arm'), ('right_lower_arm', 'right_hand')]
+        #self.connections = [(joint_list.index(connection[0]), joint_list.index(connection[1])) for connection in connected_joints]
         self.joint_sequence = joint_array
         self.root_node = 'hips'
+        self.color = color
+        self.alpha = alpha
 
     def get_joint_child(self, joint_name):
         return None
@@ -217,7 +235,7 @@ class Skeleton:
         zs = self.joint_sequence[animation_index, t, 2::3]
         return xs, ys, zs
 
-    def animate_skeleton(self, t, graph, axis, animation_index=0):
+    def animate_joints(self, t, graph, axis, animation_index=0):
         xs, ys, zs = self.get_all_joint_positions(t, animation_index)
         graph._offsets3d = (xs, zs, ys)
         if axis != None:
@@ -225,11 +243,31 @@ class Skeleton:
             axis.set_xlim3d([origin[0]+1.0, origin[0]-1.0])
             axis.set_ylim3d([origin[2]+1.0, origin[2]-1.0])
 
-def animateMultipleSkeletons(t, skeletons, graphs, axes, animation_indices=None):
+    def animate_skeleton(self, t, lines, axis, animation_index=0):
+        if axis != None:
+            origin = self.get_joint_position(self.root_node, t, animation_index)
+            axis.set_xlim3d([origin[0]+0.75, origin[0]-0.75])
+            axis.set_ylim3d([origin[2]+0.75, origin[2]-0.75])
+            axis.set_zlim3d([0.0, 1.5])
+        for i, (start_joint, end_joint) in enumerate(self.connected_joints):
+            start_position = self.get_joint_position(start_joint, t, animation_index)
+            end_position = self.get_joint_position(end_joint, t, animation_index)
+            positions = np.stack((start_position, end_position))
+            xs, ys, zs = positions[:,0], positions[:,1], positions[:,2]
+            lines[i].set_data(xs, zs)
+            lines[i].set_3d_properties(ys)
+
+def animateMultipleSkeletons(t, skeletons, lines_list, axes, animation_indices=None):
+    if animation_indices is None:
+        animation_indices = [0 for s in skeletons]
+    for skeleton, lines, axis, index in zip(skeletons, lines_list, axes, animation_indices):
+        skeleton.animate_skeleton(t, lines, axis, index)
+
+def animateMultipleScatters(t, skeletons, graphs, axes, animation_indices=None):
     if animation_indices is None:
         animation_indices = [0 for s in skeletons]
     for skeleton, graph, axis, index in zip(skeletons, graphs, axes, animation_indices):
-        skeleton.animate_skeleton(t, graph, axis, index)
+        skeleton.animate_joints(t, graph, axis, index)
 
 def loadDataset(args):
     # Load the data from the provided .npz file
@@ -557,13 +595,14 @@ def sampleModel(model, args, condition_sample=None):
     condition_skeleton, waypoint_skeleton = None, None
     if args.sample_mode == "conditioned":
         condition_skeleton = Skeleton(np.array([condition_sample]))
-        waypoint_skeleton = Skeleton(np.array([waypoint_sample]))
+        waypoint_skeleton = Skeleton(np.array([waypoint_sample]), color='tab:red', alpha=0.4)
         print("Best sample error: {}".format(sample_errors[best_index]))
     # Visualize a sample
     fig = plt.figure()
     ax1, ax2 = None, None
     skeletons = []
     graphs = []
+    line_list = []
     axes = []
     animation_indices = [0]
     if args.sample_mode == "unconditioned":
@@ -577,14 +616,21 @@ def sampleModel(model, args, condition_sample=None):
         ax1.set_zlim3d([0.0, 2.0])
         ax1.set_zlabel('Y')
         ax1.set_title('Sample Animation')
-        # Get initial joint positions
-        xs, ys, zs = skeleton.get_all_joint_positions(0)
-        # For now, just plot as points
-        # TODO: Plot the actual skeleton
-        #graph, = ax.plot(xs, ys, zs, linestyle="", marker="o")
-        graph = ax1.scatter(xs, zs, ys)
+        if args.animation_type == 'scatter':
+            # Get initial joint positions
+            xs, ys, zs = skeleton.get_all_joint_positions(0)
+            # For now, just plot as points
+            # TODO: Plot the actual skeleton
+            #graph, = ax.plot(xs, ys, zs, linestyle="", marker="o")
+            graph = ax1.scatter(xs, zs, ys)
+            graphs.append(graph)
+        elif args.animation_type == 'skeleton':
+            lines = []
+            for x in skeleton.joint_list:
+                line, = ax1.plot([],[],[], color=skeleton.color, alpha=skeleton.alpha)
+                lines.append(line)
+            line_list.append(lines)
         skeletons.append(skeleton)
-        graphs.append(graph)
         axes.append(ax1)
     elif args.sample_mode == "conditioned":
         # Make the plot wider
@@ -608,22 +654,35 @@ def sampleModel(model, args, condition_sample=None):
         ax2.set_zlim3d([0.0, 2.0])
         ax2.set_zlabel('Y')
         ax2.set_title('Conditioned Sample')
-        # Get initial joint positions
-        xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
-        graph1 = ax1.scatter(xs, zs, ys)
-        # Get initial joint positions
-        xs, ys, zs = skeleton.get_all_joint_positions(0)
-        graph2 = ax2.scatter(xs, zs, ys)
-        # Get initial joint positions
-        xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
-        graph3 = ax2.scatter(xs, zs, ys, c='red', alpha=0.2)
         skeletons = [condition_skeleton, skeleton, waypoint_skeleton]
-        graphs = [graph1, graph2, graph3]
+        if args.animation_type == 'scatter':
+            # Get initial joint positions
+            xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
+            graph1 = ax1.scatter(xs, zs, ys)
+            # Get initial joint positions
+            xs, ys, zs = skeleton.get_all_joint_positions(0)
+            graph2 = ax2.scatter(xs, zs, ys)
+            # Get initial joint positions
+            xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
+            graph3 = ax2.scatter(xs, zs, ys, c='red', alpha=0.2)
+            graphs = [graph1, graph2, graph3]
+        elif args.animation_type == 'skeleton':
+            for s, ax in zip(skeletons, [ax1, ax2, ax2]):
+                lines = []
+                for x in s.joint_list:
+                    line, = ax.plot([],[],[], color=s.color, alpha=s.alpha)
+                    lines.append(line)
+                line_list.append(lines)
         axes = [ax1, ax2, None]
         animation_indices = [0, best_index, 0]
     # Create the Animation object
-    skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
-                                        64, fargs=(skeletons, graphs, axes, animation_indices), interval=33, blit=False)
+    skeleton_animation = None
+    if args.animation_type == 'skeleton':
+        skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
+                                        64, fargs=(skeletons, line_list, axes, animation_indices), interval=33, blit=False)
+    elif args.animation_type == 'scatter':
+        skeleton_animation = animation.FuncAnimation(fig, animateMultipleScatters,
+                                        64, fargs=(skeletons, line_list, axes, animation_indices), interval=33, blit=False)
     skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
