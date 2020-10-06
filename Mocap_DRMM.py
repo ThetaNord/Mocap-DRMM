@@ -754,7 +754,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
         for i in range(1,len(waypointTimesteps)):
             waypoint_sample[waypointTimesteps[i-1]:waypointTimesteps[i]] = target[waypointTimesteps[i]]
         waypoint_sample[waypointTimesteps[-2]:] = target[-1]
-        waypoints_skeletons.append(Skeleton(np.array([waypoint_sample])))
+        waypoints_skeletons.append(Skeleton(np.array([waypoint_sample]), color='tab:red', alpha=0.4))
     # Visualize
     fig = plt.figure(figsize=(28, 10), dpi=100)
     skeletons = []
