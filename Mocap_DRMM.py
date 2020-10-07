@@ -175,6 +175,13 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
+        '--axis-type',
+        dest='axis_type',
+        help='how to set axis limits on animation (centered/full)',
+        default='centered',
+        type=str
+    )
+    parser.add_argument(
         '--no-plot',
         dest='no_plot',
         help='do not display plots for animation samples',
@@ -268,6 +275,26 @@ def animateMultipleScatters(t, skeletons, graphs, axes, animation_indices=None):
         animation_indices = [0 for s in skeletons]
     for skeleton, graph, axis, index in zip(skeletons, graphs, axes, animation_indices):
         skeleton.animate_joints(t, graph, axis, index)
+
+def getAxisLimits(skeletons, animation_index=0):
+    x0, x1, z0, z1, rnge = None, None, None, None, None
+    for skeleton in skeletons:
+        xs = skeleton.joint_sequence[animation_index, :, 0::3]
+        zs = skeleton.joint_sequence[animation_index, :, 2::3]
+        if x0 == None or x0 > np.min(xs): x0 = np.min(xs)
+        if x1 == None or x1 > np.min(xs): x1 = np.max(xs)
+        if z0 == None or z0 > np.min(zs): z0 = np.min(zs)
+        if z1 == None or z1 > np.min(zs): z1 = np.max(zs)
+    rnge = np.max([x1-x0, z1-z0])
+    if x1-x0 < rnge:
+        diff = rnge-(x1-x0)
+        x0 -= diff/2
+        x1 += diff/2
+    elif z1-z0 < rnge:
+        diff = rnge-(z1-z0)
+        z0 -= diff/2
+        z1 += diff/2
+    return x0, x1, z0, z1, rnge
 
 def loadDataset(args):
     # Load the data from the provided .npz file
@@ -606,22 +633,29 @@ def sampleModel(model, args, condition_sample=None):
     axes = []
     animation_indices = [0]
     if args.sample_mode == "unconditioned":
+        skeletons = [skeleton]
         # Create a single subplot
         ax1 = fig.add_subplot(111, projection='3d')
         # Set axis properties
-        ax1.set_xlim3d([1.0, -1.0])
-        ax1.set_xlabel('X')
-        ax1.set_ylim3d([1.0, -1.0])
-        ax1.set_ylabel('Z')
-        ax1.set_zlim3d([0.0, 2.0])
-        ax1.set_zlabel('Y')
         ax1.set_title('Sample Animation')
+        ax1.set_xlabel('X')
+        ax1.set_ylabel('Z')
+        ax1.set_zlabel('Y')
+        if args.axis_type == 'centered':
+            ax1.set_xlim3d([1.0, -1.0])
+            ax1.set_ylim3d([1.0, -1.0])
+            ax1.set_zlim3d([0.0, 2.0])
+            axes = [ax1]
+        elif args.axis_type == 'full':
+            x0, x1, z0, z1, rnge = getAxisLimits(skeletons)
+            ax1.set_xlim3d([x1+0.1, x0-0.1])
+            ax1.set_ylim3d([z1+0.1, z0-0.1])
+            ax1.set_zlim3d([0.0, rnge+0.2])
+            axes = [None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
             xs, ys, zs = skeleton.get_all_joint_positions(0)
-            # For now, just plot as points
-            # TODO: Plot the actual skeleton
-            #graph, = ax.plot(xs, ys, zs, linestyle="", marker="o")
+            # Plot joints as a scatter plot
             graph = ax1.scatter(xs, zs, ys)
             graphs.append(graph)
         elif args.animation_type == 'skeleton':
@@ -630,31 +664,39 @@ def sampleModel(model, args, condition_sample=None):
                 line, = ax1.plot([],[],[], color=skeleton.color, alpha=skeleton.alpha)
                 lines.append(line)
             line_list.append(lines)
-        skeletons.append(skeleton)
-        axes.append(ax1)
     elif args.sample_mode == "conditioned":
+        skeletons = [condition_skeleton, skeleton, waypoint_skeleton]
         # Make the plot wider
         fig.set_figwidth(12)
         # Create two subplots
         ax1 = fig.add_subplot(121, projection='3d')
         ax2 = fig.add_subplot(122, projection='3d')
         # Set axis properties
-        ax1.set_xlim3d([1.0, -1.0])
-        ax1.set_xlabel('X')
-        ax1.set_ylim3d([1.0, -1.0])
-        ax1.set_ylabel('Z')
-        ax1.set_zlim3d([0.0, 2.0])
-        ax1.set_zlabel('Y')
         ax1.set_title('Original Animation')
-        # Set axis properties
-        ax2.set_xlim3d([1.0, -1.0])
-        ax2.set_xlabel('X')
-        ax2.set_ylim3d([1.0, -1.0])
-        ax2.set_ylabel('Z')
-        ax2.set_zlim3d([0.0, 2.0])
-        ax2.set_zlabel('Y')
         ax2.set_title('Conditioned Sample')
-        skeletons = [condition_skeleton, skeleton, waypoint_skeleton]
+        ax1.set_xlabel('X')
+        ax1.set_ylabel('Z')
+        ax1.set_zlabel('Y')
+        ax2.set_xlabel('X')
+        ax2.set_ylabel('Z')
+        ax2.set_zlabel('Y')
+        if args.axis_type == 'centered':
+            ax1.set_xlim3d([1.0, -1.0])
+            ax1.set_ylim3d([1.0, -1.0])
+            ax1.set_zlim3d([0.0, 2.0])
+            ax2.set_xlim3d([1.0, -1.0])
+            ax2.set_ylim3d([1.0, -1.0])
+            ax2.set_zlim3d([0.0, 2.0])
+            axes = [ax1, ax2, None]
+        elif args.axis_type == 'full':
+            x0, x1, z0, z1, rnge = getAxisLimits(skeletons)
+            ax1.set_xlim3d([x1+0.1, x0-0.1])
+            ax1.set_ylim3d([z1+0.1, z0-0.1])
+            ax1.set_zlim3d([0.0, rnge+0.2])
+            ax2.set_xlim3d([x1+0.1, x0-0.1])
+            ax2.set_ylim3d([z1+0.1, z0-0.1])
+            ax2.set_zlim3d([0.0, rnge+0.2])
+            axes = [None, None, None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
             xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
@@ -673,7 +715,6 @@ def sampleModel(model, args, condition_sample=None):
                     line, = ax.plot([],[],[], color=s.color, alpha=s.alpha)
                     lines.append(line)
                 line_list.append(lines)
-        axes = [ax1, ax2, None]
         animation_indices = [0, best_index, 0]
     # Create the Animation object
     skeleton_animation = None
