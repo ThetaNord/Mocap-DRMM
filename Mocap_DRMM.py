@@ -78,6 +78,13 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
+        '--keyframe-display-mode',
+        dest='keyframe_display_mode',
+        help='how to show keyframes in animations (next/all)',
+        default='next',
+        type=str
+    )
+    parser.add_argument(
         '--keyframe-calculation-interval',
         dest='keyframe_calculation_interval',
         help='if calculating keframes, how many frames backwards and forwards to look',
@@ -593,8 +600,7 @@ def sampleModel(model, args, condition_sample=None):
     samples = None
     sample_errors = None
     best_index = 0
-    waypoint_sample = np.zeros_like(condition_sample)
-    if args.debug: print(waypoint_sample.shape)
+    waypoint_samples = []
     if args.sample_mode == "unconditioned":
         samples = model.sample(args.sample_batch_size, temperature=args.temperature, sorted=True)
         if args.debug: print(samples)
@@ -603,10 +609,17 @@ def sampleModel(model, args, condition_sample=None):
             print("ERROR: Condition sample required!")
             return
         waypointTimesteps = getKeyFrameTimesteps(condition_sample, args)
-        #waypointTimesteps = calculateKeyFrames(condition_sample, args.keyframe_count)
-        for i in range(1,len(waypointTimesteps)):
-            waypoint_sample[waypointTimesteps[i-1]:waypointTimesteps[i]] = condition_sample[waypointTimesteps[i]]
-        waypoint_sample[waypointTimesteps[-2]:] = condition_sample[-1]
+        if args.keyframe_display_mode == 'next':
+            waypoint_sample = np.zeros_like(condition_sample)
+            for i in range(1,len(waypointTimesteps)):
+                waypoint_sample[waypointTimesteps[i-1]:waypointTimesteps[i]] = condition_sample[waypointTimesteps[i]]
+            waypoint_sample[waypointTimesteps[-2]:] = condition_sample[-1]
+            waypoint_samples.append(waypoint_sample)
+        elif args.keyframe_display_mode == 'all':
+            for i in waypointTimesteps:
+                waypoint_sample = np.zeros_like(condition_sample)
+                waypoint_sample[:] = condition_sample[i]
+                waypoint_samples.append(waypoint_sample)
         samplingInputData = np.resize(condition_sample, (args.sample_batch_size, args.sequence_length, args.data_dimension))
         samplingMask = np.zeros_like(samplingInputData)
         samplingMask[:,waypointTimesteps,:] = 1.0
@@ -619,10 +632,13 @@ def sampleModel(model, args, condition_sample=None):
             print("Best index: {}".format(best_index))
     # Create a skeleton with the given samples
     skeleton = Skeleton(samples)
-    condition_skeleton, waypoint_skeleton = None, None
+    condition_skeleton = None
+    waypoints_skeletons = []
     if args.sample_mode == "conditioned":
         condition_skeleton = Skeleton(np.array([condition_sample]))
-        waypoint_skeleton = Skeleton(np.array([waypoint_sample]), color='tab:red', alpha=0.4)
+        for waypoint_sample in waypoint_samples:
+            waypoint_skeleton = Skeleton(np.array([waypoint_sample]), color='tab:red', alpha=0.4)
+            waypoints_skeletons.append(waypoint_skeleton)
         print("Best sample error: {}".format(sample_errors[best_index]))
     # Visualize a sample
     fig = plt.figure()
@@ -631,7 +647,7 @@ def sampleModel(model, args, condition_sample=None):
     graphs = []
     line_list = []
     axes = []
-    animation_indices = [0]
+    animation_indices = [0, best_index]
     if args.sample_mode == "unconditioned":
         skeletons = [skeleton]
         # Create a single subplot
@@ -665,7 +681,7 @@ def sampleModel(model, args, condition_sample=None):
                 lines.append(line)
             line_list.append(lines)
     elif args.sample_mode == "conditioned":
-        skeletons = [condition_skeleton, skeleton, waypoint_skeleton]
+        skeletons = [condition_skeleton, skeleton]
         # Make the plot wider
         fig.set_figwidth(12)
         # Create two subplots
@@ -687,7 +703,7 @@ def sampleModel(model, args, condition_sample=None):
             ax2.set_xlim3d([1.0, -1.0])
             ax2.set_ylim3d([1.0, -1.0])
             ax2.set_zlim3d([0.0, 2.0])
-            axes = [ax1, ax2, None]
+            axes = [ax1, ax2]
         elif args.axis_type == 'full':
             x0, x1, z0, z1, rnge = getAxisLimits(skeletons)
             ax1.set_xlim3d([x1+0.1, x0-0.1])
@@ -696,7 +712,7 @@ def sampleModel(model, args, condition_sample=None):
             ax2.set_xlim3d([x1+0.1, x0-0.1])
             ax2.set_ylim3d([z1+0.1, z0-0.1])
             ax2.set_zlim3d([0.0, rnge+0.2])
-            axes = [None, None, None]
+            axes = [None, None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
             xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
@@ -704,18 +720,28 @@ def sampleModel(model, args, condition_sample=None):
             # Get initial joint positions
             xs, ys, zs = skeleton.get_all_joint_positions(0)
             graph2 = ax2.scatter(xs, zs, ys)
-            # Get initial joint positions
-            xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
-            graph3 = ax2.scatter(xs, zs, ys, c='red', alpha=0.2)
-            graphs = [graph1, graph2, graph3]
+            graphs = [graph1, graph2]
+            for waypoint_skeleton in waypoints_skeletons:
+                # Get initial joint positions
+                xs, ys, zs = waypoint_skeleton.get_all_joint_positions(0)
+                graph = ax2.scatter(xs, zs, ys, c='red', alpha=0.2)
+                skeletons.append(waypoint_skeleton)
+                graphs.append(graph)
+                axes.append(None)
+                animation_indices.append(0)
         elif args.animation_type == 'skeleton':
-            for s, ax in zip(skeletons, [ax1, ax2, ax2]):
+            temp_axes = [ax1, ax2]
+            for waypoint_skeleton in waypoints_skeletons:
+                skeletons.append(waypoint_skeleton)
+                temp_axes.append(ax2)
+                axes.append(None)
+                animation_indices.append(0)
+            for s, ax in zip(skeletons, temp_axes):
                 lines = []
                 for x in s.joint_list:
                     line, = ax.plot([],[],[], color=s.color, alpha=s.alpha)
                     lines.append(line)
                 line_list.append(lines)
-        animation_indices = [0, best_index, 0]
     # Create the Animation object
     skeleton_animation = None
     if args.animation_type == 'skeleton':
