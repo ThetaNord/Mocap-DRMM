@@ -291,24 +291,31 @@ def animateMultipleScatters(t, skeletons, graphs, axes, animation_indices=None):
         skeleton.animate_joints(t, graph, axis, index)
 
 def getAxisLimits(skeletons, animation_index=0):
-    x0, x1, z0, z1, rnge = None, None, None, None, None
+    x0, x1, y0, y1, z0, z1 = None, None, None, None, None, None
     for skeleton in skeletons:
         xs = skeleton.joint_sequence[animation_index, :, 0::3]
+        ys = skeleton.joint_sequence[animation_index, :, 1::3]
         zs = skeleton.joint_sequence[animation_index, :, 2::3]
         if x0 == None or x0 > np.min(xs): x0 = np.min(xs)
         if x1 == None or x1 > np.min(xs): x1 = np.max(xs)
+        if y0 == None or y0 > np.min(ys): y0 = np.min(ys)
+        if y1 == None or y1 > np.min(ys): y1 = np.max(ys)
         if z0 == None or z0 > np.min(zs): z0 = np.min(zs)
         if z1 == None or z1 > np.min(zs): z1 = np.max(zs)
-    rnge = np.max([x1-x0, z1-z0])
+    rnge = np.max([x1-x0, y1-y0, z1-z0])
     if x1-x0 < rnge:
         diff = rnge-(x1-x0)
         x0 -= diff/2
         x1 += diff/2
-    elif z1-z0 < rnge:
+    if y1-y0 < rnge:
+        diff = rnge-(y1-y0)
+        y0 -= diff/2
+        y1 += diff/2
+    if z1-z0 < rnge:
         diff = rnge-(z1-z0)
         z0 -= diff/2
         z1 += diff/2
-    return x0, x1, z0, z1, rnge
+    return x0, x1, y0, y1, z0, z1
 
 def cleanAxis(ax):
     ax.grid(False)
@@ -688,10 +695,10 @@ def sampleModel(model, args, condition_sample=None):
             ax1.set_zlim3d([0.0, 2.0])
             axes = [ax1]
         elif args.axis_type == 'full':
-            x0, x1, z0, z1, rnge = getAxisLimits(skeletons)
+            x0, x1, y0, y1, z0, z1 = getAxisLimits(skeletons)
             ax1.set_xlim3d([x1+0.1, x0-0.1])
             ax1.set_ylim3d([z1+0.1, z0-0.1])
-            ax1.set_zlim3d([0.0, rnge+0.2])
+            ax1.set_zlim3d([y0, y1+0.2])
             axes = [None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
@@ -733,15 +740,6 @@ def sampleModel(model, args, condition_sample=None):
             ax2.set_ylim3d([1.0, -1.0])
             ax2.set_zlim3d([0.0, 2.0])
             axes = [ax1, ax2]
-        elif args.axis_type == 'full':
-            x0, x1, z0, z1, rnge = getAxisLimits(skeletons)
-            ax1.set_xlim3d([x1+0.1, x0-0.1])
-            ax1.set_ylim3d([z1+0.1, z0-0.1])
-            ax1.set_zlim3d([0.0, rnge+0.2])
-            ax2.set_xlim3d([x1+0.1, x0-0.1])
-            ax2.set_ylim3d([z1+0.1, z0-0.1])
-            ax2.set_zlim3d([0.0, rnge+0.2])
-            axes = [None, None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
             xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
@@ -771,6 +769,15 @@ def sampleModel(model, args, condition_sample=None):
                     line, = ax.plot([],[],[], color=s.color, alpha=s.alpha)
                     lines.append(line)
                 line_list.append(lines)
+        if args.axis_type == 'full':
+            x0, x1, y0, y1, z0, z1 = getAxisLimits(skeletons)
+            ax1.set_xlim3d([x1+0.1, x0-0.1])
+            ax1.set_ylim3d([z1+0.1, z0-0.1])
+            ax1.set_zlim3d([0.0, (y1-y0)+0.2])
+            ax2.set_xlim3d([x1+0.1, x0-0.1])
+            ax2.set_ylim3d([z1+0.1, z0-0.1])
+            ax2.set_zlim3d([0.0, (y1-y0)+0.2])
+            axes = [None, None]
     # Create the Animation object
     skeleton_animation = None
     if args.animation_type == 'skeleton':
