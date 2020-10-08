@@ -297,11 +297,11 @@ def getAxisLimits(skeletons, animation_index=0):
         ys = skeleton.joint_sequence[animation_index, :, 1::3]
         zs = skeleton.joint_sequence[animation_index, :, 2::3]
         if x0 == None or x0 > np.min(xs): x0 = np.min(xs)
-        if x1 == None or x1 > np.min(xs): x1 = np.max(xs)
+        if x1 == None or x1 < np.max(xs): x1 = np.max(xs)
         if y0 == None or y0 > np.min(ys): y0 = np.min(ys)
-        if y1 == None or y1 > np.min(ys): y1 = np.max(ys)
+        if y1 == None or y1 < np.max(ys): y1 = np.max(ys)
         if z0 == None or z0 > np.min(zs): z0 = np.min(zs)
-        if z1 == None or z1 > np.min(zs): z1 = np.max(zs)
+        if z1 == None or z1 < np.max(zs): z1 = np.max(zs)
     rnge = np.max([x1-x0, y1-y0, z1-z0])
     if x1-x0 < rnge:
         diff = rnge-(x1-x0)
@@ -698,7 +698,7 @@ def sampleModel(model, args, condition_sample=None):
             x0, x1, y0, y1, z0, z1 = getAxisLimits(skeletons)
             ax1.set_xlim3d([x1+0.1, x0-0.1])
             ax1.set_ylim3d([z1+0.1, z0-0.1])
-            ax1.set_zlim3d([y0, y1+0.2])
+            ax1.set_zlim3d([0, (y1-y0)+0.2])
             axes = [None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
