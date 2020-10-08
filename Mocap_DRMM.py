@@ -740,6 +740,8 @@ def sampleModel(model, args, condition_sample=None):
             ax2.set_ylim3d([1.0, -1.0])
             ax2.set_zlim3d([0.0, 2.0])
             axes = [ax1, ax2]
+        elif args.axis_type == 'full':
+            axes = [None, None]
         if args.animation_type == 'scatter':
             # Get initial joint positions
             xs, ys, zs = condition_skeleton.get_all_joint_positions(0)
@@ -777,7 +779,6 @@ def sampleModel(model, args, condition_sample=None):
             ax2.set_xlim3d([x1+0.1, x0-0.1])
             ax2.set_ylim3d([z1+0.1, z0-0.1])
             ax2.set_zlim3d([0.0, (y1-y0)+0.2])
-            axes = [None, None]
     # Create the Animation object
     skeleton_animation = None
     if args.animation_type == 'skeleton':
