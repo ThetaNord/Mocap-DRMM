@@ -189,6 +189,13 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
+        '--axis-display',
+        dest='axis_display',
+        help='how much information to display on axes (minimal/full)',
+        default='minimal',
+        type=str
+    )
+    parser.add_argument(
         '--no-plot',
         dest='no_plot',
         help='do not display plots for animation samples',
@@ -302,6 +309,21 @@ def getAxisLimits(skeletons, animation_index=0):
         z0 -= diff/2
         z1 += diff/2
     return x0, x1, z0, z1, rnge
+
+def cleanAxis(ax):
+    ax.grid(False)
+    ax.set_xlabel('')
+    ax.set_ylabel('')
+    ax.set_zlabel('')
+    ax.xaxis._axinfo['tick']['outward_factor'] = 0
+    ax.xaxis._axinfo['tick']['inward_factor'] = 0
+    ax.yaxis._axinfo['tick']['outward_factor'] = 0
+    ax.yaxis._axinfo['tick']['inward_factor'] = 0
+    ax.zaxis._axinfo['tick']['outward_factor'] = 0
+    ax.zaxis._axinfo['tick']['inward_factor'] = 0
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.set_zticks([])
 
 def loadDataset(args):
     # Load the data from the provided .npz file
@@ -654,9 +676,12 @@ def sampleModel(model, args, condition_sample=None):
         ax1 = fig.add_subplot(111, projection='3d')
         # Set axis properties
         ax1.set_title('Sample Animation')
-        ax1.set_xlabel('X')
-        ax1.set_ylabel('Z')
-        ax1.set_zlabel('Y')
+        if args.axis_display == 'full':
+            ax1.set_xlabel('X')
+            ax1.set_ylabel('Z')
+            ax1.set_zlabel('Y')
+        elif args.axis_display == 'minimal':
+            cleanAxis(ax1)
         if args.axis_type == 'centered':
             ax1.set_xlim3d([1.0, -1.0])
             ax1.set_ylim3d([1.0, -1.0])
@@ -690,12 +715,16 @@ def sampleModel(model, args, condition_sample=None):
         # Set axis properties
         ax1.set_title('Original Animation')
         ax2.set_title('Conditioned Sample')
-        ax1.set_xlabel('X')
-        ax1.set_ylabel('Z')
-        ax1.set_zlabel('Y')
-        ax2.set_xlabel('X')
-        ax2.set_ylabel('Z')
-        ax2.set_zlabel('Y')
+        if args.axis_display == 'full':
+            ax1.set_xlabel('X')
+            ax1.set_ylabel('Z')
+            ax1.set_zlabel('Y')
+            ax2.set_xlabel('X')
+            ax2.set_ylabel('Z')
+            ax2.set_zlabel('Y')
+        elif args.axis_display == 'minimal':
+            cleanAxis(ax1)
+            cleanAxis(ax2)
         if args.axis_type == 'centered':
             ax1.set_xlim3d([1.0, -1.0])
             ax1.set_ylim3d([1.0, -1.0])
