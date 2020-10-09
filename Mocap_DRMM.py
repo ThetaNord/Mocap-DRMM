@@ -941,8 +941,11 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
     elif args.animation_type == 'skeleton':
         skeleton_animation = animation.FuncAnimation(fig, animateMultipleSkeletons,
                                             64, fargs=(skeletons, line_list, axes), interval=33, blit=False)
+    # Set up formatting for the movie files
+    Writer = animation.writers['ffmpeg']
+    writer = Writer(fps=30, bitrate=1800)
     # Save animation
-    skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
+    skeleton_animation.save('animations/'+args.sample_outfile, writer=writer)
     # Show plot
     if not args.no_plot:
         plt.show()
