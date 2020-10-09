@@ -92,9 +92,9 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
-        '--track-joint',
-        dest='track_joint',
-        help='name of the joint to track through a conditioned sample (defaults to none)',
+        '--track-joints',
+        dest='track_joints',
+        help='names of the joints to track through a conditioned sample as a comma-separated list (defaults to none)',
         default='none',
         type=str
     )
@@ -225,6 +225,10 @@ def parse_args(argv):
         parser.print_help()
         sys.exit(1)
     args = parser.parse_args()
+    if args.track_joints == 'none':
+        args.track_joints = None
+    else:
+        args.track_joints = args.track_joints.split(',')
     return args
 
 #from .visualization import Skeleton
@@ -660,13 +664,14 @@ def sampleModel(model, args, condition_sample=None):
         samplingInputData = np.resize(condition_sample, (args.sample_batch_size, args.sequence_length, args.data_dimension))
         samplingMask = np.zeros_like(samplingInputData)
         samplingMask[:,waypointTimesteps,:] = 1.0
-        if args.track_joint != 'none':
-            base_idx = Skeleton.joint_list.index(args.track_joint)*3
-            samplingMask[:,:,base_idx:base_idx+3] = 1.0
-            if args.debug:
-                print(args.track_joint)
-                print(base_idx)
-                print(samplingMask)
+        if args.track_joints != None:
+            for joint in args.track_joints:
+                base_idx = Skeleton.joint_list.index(joint)*3
+                samplingMask[:,:,base_idx:base_idx+3] = 1.0
+                if args.debug:
+                    print(joint)
+                    print(base_idx)
+            if args.debug: print(samplingMask)
         samples = model.sample(inputs=DataIn(data=samplingInputData, mask=samplingMask),
                                 temperature=args.temperature, sorted=True)
         min_error, best_index, sample_errors = calculateMinimumError(samples, samplingInputData, args, samplingMask)
@@ -794,13 +799,14 @@ def sampleModel(model, args, condition_sample=None):
             ax2.set_xlim3d([x1+0.1, x0-0.1])
             ax2.set_ylim3d([z1+0.1, z0-0.1])
             ax2.set_zlim3d([0.0, (y1-y0)+0.2])
-        if args.track_joint != 'none':
-            base_idx = Skeleton.joint_list.index(args.track_joint)*3
-            joint_path = condition_skeleton.joint_sequence[0, :, base_idx:base_idx+3]
-            xs = np.repeat(joint_path[:, 0::3], 2)[1:-1]
-            ys = np.repeat(joint_path[:, 1::3], 2)[1:-1]
-            zs = np.repeat(joint_path[:, 2::3], 2)[1:-1]
-            ax2.plot(xs, zs, ys, color='tab:red', alpha=0.4)
+        if args.track_joints != None:
+            for joint in args.track_joints:
+                base_idx = Skeleton.joint_list.index(joint)*3
+                joint_path = condition_skeleton.joint_sequence[0, :, base_idx:base_idx+3]
+                xs = np.repeat(joint_path[:, 0::3], 2)[1:-1]
+                ys = np.repeat(joint_path[:, 1::3], 2)[1:-1]
+                zs = np.repeat(joint_path[:, 2::3], 2)[1:-1]
+                ax2.plot(xs, zs, ys, color='tab:red', alpha=0.4)
     # Create the Animation object
     skeleton_animation = None
     if args.animation_type == 'skeleton':
