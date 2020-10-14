@@ -204,20 +204,26 @@ def dataFirstSplit(zf, files, args):
     if DEBUG_LEVEL > 0:
         print("Train files: {}".format(train_files.shape[0]))
         print("Test files: {}".format(test_files.shape[0]))
+    #train_count = 0
+    #test_count = 0
     for f in train_files:
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if DEBUG_LEVEL > 0: print(f.filename)
             sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size)
+            #if len(sequences) > 0: train_count += 1
             train_list.extend(sequences)
     for f in test_files:
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if DEBUG_LEVEL > 0: print(f.filename)
             sequences = fileToSequences(zf, f.filename, args.sequence_length, 64)
+            #if len(sequences) > 0: test_count += 1
             test_list.extend(sequences)
     train_data = np.array(train_list)
     test_data = np.array(test_list)
+    #print("Training clips: {}".format(train_count))
+    #print("Test clips: {}".format(test_count))
     return train_data, test_data
 
 def dataLastSplit(zf, files, args):
@@ -228,7 +234,7 @@ def dataLastSplit(zf, files, args):
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if (DEBUG_LEVEL > 0): print(f.filename)
-            sequences = fileToSequences(zf, f.filename, args)
+            sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size)
             data_list.extend(sequences)
     if DEBUG_LEVEL > 0: print("Total sequences: {}".format(len(data_list)))
     full_data = np.array(data_list)
