@@ -636,6 +636,10 @@ def testModel(model, test_dataset, test_dict, session, args):
             waypointTimesteps = getKeyFrameTimesteps(target, args)
             samplingMask = np.zeros_like(samplingInputData)
             samplingMask[:,waypointTimesteps,:] = 1.0
+            if args.track_joints != None:
+                for joint in args.track_joints:
+                    base_idx = Skeleton.joint_list.index(joint)*3
+                    samplingMask[:,:,base_idx:base_idx+3] = 1.0
             if args.debug:
                 print("First input sequence: {}".format(samplingInputData[0]))
                 print("Last input sequence: {}".format(samplingInputData[-1]))
