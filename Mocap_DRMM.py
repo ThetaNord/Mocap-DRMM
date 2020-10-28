@@ -94,7 +94,7 @@ def parse_args(argv):
     parser.add_argument(
         '--track-joints',
         dest='track_joints',
-        help='names of the joints to track through a conditioned sample as a comma-separated list (defaults to none)',
+        help='names of the joints to track through sampling as a comma-separated list (defaults to none)',
         default='none',
         type=str
     )

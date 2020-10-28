@@ -20,6 +20,10 @@ CSV_COLUMNS_REORDERED = ['left_hand', 'right_hand', 'left_lower_arm', 'right_low
     'left_upper_arm', 'right_upper_arm', 'left_shoulder', 'right_shoulder', 'head', 'neck',
     'spine', 'hips', 'left_upper_leg', 'right_upper_leg', 'left_lower_leg', 'right_lower_leg',
     'left_foot', 'right_foot', 'left_toes', 'right_toes']
+CSV_COLUMNS_MIRRORED = ['right_hand', 'left_hand', 'right_lower_arm','left_lower_arm',
+    'right_upper_arm', 'left_upper_arm', 'right_shoulder', 'left_shoulder', 'head', 'neck',
+    'spine', 'hips', 'right_upper_leg', 'left_upper_leg', 'right_lower_leg', 'left_lower_leg',
+    'right_foot', 'left_foot', 'right_toes', 'left_toes']
 ROOT_COLUMN = 'hips'         # column label for the body part to use as root
 DROP_COLUMNS = ['is_first', 'none']
 SHOULDER_COLUMNS = ['left_shoulder', 'right_shoulder']
@@ -28,7 +32,7 @@ CSV_DELIMITER = ';'
 # Preprocessing Parameters
 NORMALIZE_POSITION = True
 NORMALIZE_ROTATION = True
-REORDER_COLUMNS = True
+#REORDER_COLUMNS = True
 
 def parse_args(argv):
     parser = argparse.ArgumentParser()
@@ -75,6 +79,12 @@ def parse_args(argv):
         type=str
     )
     parser.add_argument(
+        '--mirror-animations',
+        dest='mirror_animations',
+        help='augment data by left-right mirroring animations',
+        action='store_true'
+    )
+    parser.add_argument(
         '--seed',
         dest='seed',
         help='seed for initializing tensorflow random number generation',
@@ -104,15 +114,15 @@ def rotateMatrix(matrix, cosine, sine):
         print("Difference:\n{}".format(np.subtract(rot_matrix, matrix)))
     return rot_matrix
 
-def processDataFrame(dataFrame):
+def processDataFrame(dataFrame, mirror=False):
     # Drop unused columns
     for column in DROP_COLUMNS:
         if column in dataFrame:
             dataFrame = dataFrame.drop(column, axis=1)
-    if REORDER_COLUMNS:
-        if DEBUG_LEVEL > 1: print("Columns before reorder:\n{}".format(dataFrame.columns))
-        dataFrame = dataFrame[CSV_COLUMNS_REORDERED]
-        if DEBUG_LEVEL > 1: print("Columns after reorder:\n{}".format(dataFrame.columns))
+    if DEBUG_LEVEL > 1: print("Columns before reorder:\n{}".format(dataFrame.columns))
+    if mirror: dataFrame = dataFrame[CSV_COLUMNS_MIRRORED]
+    else: dataFrame = dataFrame[CSV_COLUMNS_REORDERED]
+    if DEBUG_LEVEL > 1: print("Columns after reorder:\n{}".format(dataFrame.columns))
     # Get root column index
     root_index = dataFrame.columns.get_loc(ROOT_COLUMN)*3
     # Get shoulder shoulder indices
@@ -168,10 +178,14 @@ def processDataFrame(dataFrame):
             print("Sine after rotation: {}".format(sine))
             radians = np.arccos(cosine)
             print("Radians after rotation (should be zero): {}".format(radians))
+    if mirror:
+        # Flip the coordinates relative to the z-axis
+        multiplier = np.resize(np.array([1, 1, -1]), processedFrame.shape)
+        processedFrame = np.multiply(processedFrame, multiplier)
     # Return the processed frame
     return processedFrame
 
-def fileToSequences(zf, filename, sequence_length, step_size):
+def fileToSequences(zf, filename, sequence_length, step_size, mirror_animations):
     # Load the contents of the file into a dataframe
     dataFrame = pd.read_csv(zf.open(filename), sep=CSV_DELIMITER, names=CSV_COLUMNS)
     # Initiate list for storing sequences
@@ -193,6 +207,12 @@ def fileToSequences(zf, filename, sequence_length, step_size):
         if DEBUG_LEVEL > 1: print(dataArray)
         # Store the dataframe in the list
         sequences.append(dataArray)
+        if mirror_animations:
+            mirrored_array = processDataFrame(currentFrame, mirror=True)
+            sequences.append(mirrored_array)
+            if DEBUG_LEVEL > 1:
+                mirror_sum = np.add(dataArray[:, 26:38:3], mirrored_array[:, 26:38:3])
+                print(mirror_sum)
         start += step_size
         end += step_size
     return sequences
@@ -210,7 +230,7 @@ def dataFirstSplit(zf, files, args):
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if DEBUG_LEVEL > 0: print(f.filename)
-            sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size)
+            sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size, args.mirror_animations)
             #if len(sequences) > 0: train_count += 1
             train_list.extend(sequences)
     for f in test_files:
@@ -234,7 +254,7 @@ def dataLastSplit(zf, files, args):
         # Make sure that the file is a CSV file
         if f.filename.endswith(".csv"):
             if (DEBUG_LEVEL > 0): print(f.filename)
-            sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size)
+            sequences = fileToSequences(zf, f.filename, args.sequence_length, args.step_size, args.mirror_animations)
             data_list.extend(sequences)
     if DEBUG_LEVEL > 0: print("Total sequences: {}".format(len(data_list)))
     full_data = np.array(data_list)
