@@ -836,7 +836,7 @@ def sampleModel(model, args, condition_sample=None):
                                         64, fargs=(skeletons, line_list, axes, animation_indices), interval=33, blit=False)
     elif args.animation_type == 'scatter':
         skeleton_animation = animation.FuncAnimation(fig, animateMultipleScatters,
-                                        64, fargs=(skeletons, line_list, axes, animation_indices), interval=33, blit=False)
+                                        64, fargs=(skeletons, graphs, axes, animation_indices), interval=33, blit=False)
     skeleton_animation.save('animations/'+args.sample_outfile, writer='imagemagick', fps=30)
     # Show plot
     if not args.no_plot:
