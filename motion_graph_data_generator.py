@@ -185,6 +185,7 @@ def file_to_sequences(zf, filename, sequence_length, step_size, mirror_animation
 def calculate_limits(sequences):
     max_speeds = np.zeros(len(CSV_COLUMNS_REORDERED))
     max_accelerations = np.zeros(len(CSV_COLUMNS_REORDERED))
+    max_jerks = np.zeros(len(CSV_COLUMNS_REORDERED))
     # Calculate velocity and acceleration for each joint in each frame
     for k in range(sequences.shape[0]):
         sequence = sequences[k]
@@ -209,10 +210,17 @@ def calculate_limits(sequences):
                     scalar_acceleration = np.linalg.norm(accelerations[j])
                     if max_accelerations[j] < scalar_acceleration:
                         max_accelerations[j] = scalar_acceleration
-                # TODO: Calculate torques?
+                # Calculate jerks
+                if i >= 3:
+                    prev_accelerations = sequence_accelerations[-1]
+                    jerks = accelerations - prev_accelerations
+                    for j in range(jerks.shape[0]):
+                        scalar_jerk = np.linalg.norm(jerks[j])
+                        if max_jerks[j] < scalar_jerk:
+                            max_jerks[j] = scalar_jerk
                 sequence_accelerations.append(accelerations)
             sequence_velocities.append(velocities)
-    limits = {"speed_limits": max_speeds, "acceleration_limits": max_accelerations}
+    limits = {"speed_limits": max_speeds, "acceleration_limits": max_accelerations, "jerk_limits": max_jerks}
     return limits
 
 # Verify that adding new_frame to animation would not break given limits
@@ -231,11 +239,18 @@ def verify_frame(animation, new_frame, limits):
                 scalar_acceleration = np.linalg.norm(acceleration)
                 if scalar_acceleration > limits["acceleration_limits"][j]:
                     return False
+                if len(animation) > 2:
+                    prev_acceleration = prev_velocity - (animation[-2][3*j:3*(j+1)] - animation[-3][3*j:3*(j+1)])
+                    jerk = acceleration - prev_acceleration
+                    scalar_jerk = np.linalg.norm(jerk)
+                    if scalar_jerk > limits["jerk_limits"][j]:
+                        return False
     return True
 
 def create_animation(frames, animation_length, limits, always_return=False):
     # Initialize a list for storing the animation
     animation_sequence = []
+    root_index = CSV_COLUMNS_REORDERED.index(ROOT_COLUMN)*3
     # Index all frames
     frame_index = list(range(len(frames)))
     # Randomly pick initial frame and add it to animation
@@ -248,7 +263,11 @@ def create_animation(frames, animation_length, limits, always_return=False):
     while len(animation_sequence) < animation_length and len(temp_index) > 0:
         idx = np.random.choice(temp_index)
         frame = frames[idx]
+        origin = animation_sequence[-1][root_index:root_index+3].copy()
+        origin[1] = 0.0
+        frame = frame + np.resize(origin, frame.shape)
         if verify_frame(animation_sequence, frame, limits):
+            #print("Selected index: {}".format(idx))
             animation_sequence.append(frame)
             frame_index.remove(idx)
             temp_index = frame_index.copy()
@@ -260,6 +279,9 @@ def create_animation(frames, animation_length, limits, always_return=False):
         animation = np.array(animation_sequence)
         # Normalize animation
         animation = normalize_frames(animation)
+        print("Animation completed!")
+    else:
+        print("Animation unfinished...")
     return animation
 
 def create_animation_dataset(zf, files, args):
@@ -287,7 +309,6 @@ def create_animation_dataset(zf, files, args):
         if f.filename.endswith(".csv"):
             sequences = file_to_sequences(zf, f.filename, 2, 1, args.mirror_animations)
             sequence_list.extend(sequences)
-    if DEBUG_LEVEL > 0: print("Total sequences: {}".format(len(sequence_list)))
     full_data = np.array(sequence_list)
     frames = full_data[:, 1]
     print("Frames collected")
@@ -304,16 +325,6 @@ def create_animation_dataset(zf, files, args):
     train_data, validation_data = train_test_split(train_data, test_size=test_data.shape[0], random_state=args.seed)
     print("Dataset split complete")
     return train_data, validation_data, test_data
-
-# Partition the whole dataset into an array of individual frames [NOT USED]
-def get_frames(full_data):
-    frames = []
-    for sequence in np.nditer(full_data):
-        origin = np.array([0, 0, 0])
-        for frame in np.nditer(sequence):
-            frames.append(frame - np.resize(origin, frame.shape))
-            origin = frame[0:3]
-    return np.array(frames)
 
 def main(args):
     # Load the zip file from the given path
