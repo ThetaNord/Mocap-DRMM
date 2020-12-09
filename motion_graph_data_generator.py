@@ -53,6 +53,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--clip-length',
+        dest='clip_length',
+        help='length of motion clips to use for animation construction',
+        default=8,
+        type=int
+    )
+    parser.add_argument(
         '--dataset-size',
         dest='dataset_size',
         help='how many animations to create for the dataset',
@@ -225,52 +232,52 @@ def calculate_limits(sequences):
 
 # Verify that adding new_frame to animation would not break given limits
 def verify_frame(animation, new_frame, limits):
-    if animation != None and len(animation) > 0:
+    if animation is not None and animation.shape[0] > 0:
         for j in range(len(CSV_COLUMNS_REORDERED)):
-            joint_start = animation[-1][3*j:3*(j+1)]
+            joint_start = animation[-1, 3*j:3*(j+1)]
             joint_end = new_frame[3*j:3*(j+1)]
             velocity = joint_end - joint_start
             speed = np.linalg.norm(velocity)
             if speed > limits["speed_limits"][j]:
                 return False
             if len(animation) > 1:
-                prev_velocity = animation[-1][3*j:3*(j+1)] - animation[-2][3*j:3*(j+1)]
+                prev_velocity = animation[-1, 3*j:3*(j+1)] - animation[-2, 3*j:3*(j+1)]
                 acceleration = velocity - prev_velocity
                 scalar_acceleration = np.linalg.norm(acceleration)
                 if scalar_acceleration > limits["acceleration_limits"][j]:
                     return False
                 if len(animation) > 2:
-                    prev_acceleration = prev_velocity - (animation[-2][3*j:3*(j+1)] - animation[-3][3*j:3*(j+1)])
+                    prev_acceleration = prev_velocity - (animation[-2, 3*j:3*(j+1)] - animation[-3, 3*j:3*(j+1)])
                     jerk = acceleration - prev_acceleration
                     scalar_jerk = np.linalg.norm(jerk)
                     if scalar_jerk > limits["jerk_limits"][j]:
                         return False
     return True
 
-def create_animation(frames, animation_length, limits, always_return=False):
-    # Initialize a list for storing the animation
-    animation_sequence = []
+def create_animation(clips, animation_length, limits, always_return=False):
+    # Get root index
     root_index = CSV_COLUMNS_REORDERED.index(ROOT_COLUMN)*3
-    # Index all frames
-    frame_index = list(range(len(frames)))
-    # Randomly pick initial frame and add it to animation
-    idx = np.random.choice(frame_index)
-    animation_sequence.append(frames[idx])
+    # Index all clips
+    clip_index = list(range(len(clips)))
+    # Randomly pick initial clip to start animation
+    idx = np.random.choice(clip_index)
+    animation_sequence = clips[idx]
     # Remove selected frame from index
-    frame_index.remove(idx)
-    temp_index = frame_index.copy()
-    # Keep picking additional frames, adhering to limits, until animation is the right length or index is exhausted
-    while len(animation_sequence) < animation_length and len(temp_index) > 0:
+    clip_index.remove(idx)
+    temp_index = clip_index.copy()
+    # Keep picking additional clips, adhering to limits, until animation is the right length or index is exhausted
+    while animation_sequence.shape[0] < animation_length and len(temp_index) > 0:
         idx = np.random.choice(temp_index)
-        frame = frames[idx]
-        origin = animation_sequence[-1][root_index:root_index+3].copy()
+        clip = clips[idx].copy()
+        origin = animation_sequence[-1, root_index:root_index+3].copy()
         origin[1] = 0.0
-        frame = frame + np.resize(origin, frame.shape)
-        if verify_frame(animation_sequence, frame, limits):
+        clip = clip + np.resize(origin, clip.shape)
+        if verify_frame(animation_sequence, clip[0], limits):
             #print("Selected index: {}".format(idx))
-            animation_sequence.append(frame)
-            frame_index.remove(idx)
-            temp_index = frame_index.copy()
+            animation_sequence = np.concatenate((animation_sequence, clip))
+            print(animation_sequence.shape)
+            clip_index.remove(idx)
+            temp_index = clip_index.copy()
         else:
             temp_index.remove(idx)
     # Convert animation sequence into a numpy array
@@ -301,21 +308,21 @@ def create_animation_dataset(zf, files, args):
     # Part 2: Calculate limits
     limits = calculate_limits(sequences)
     print("Limits calculated")
-    # Part 3: Get individual frames
+    # Part 3: Get individual clips
     sequence_list = []
     # Loop over all the files in the archive
     for f in files:
         # Verify that the file is a CSV file
         if f.filename.endswith(".csv"):
-            sequences = file_to_sequences(zf, f.filename, 2, 1, args.mirror_animations)
+            sequences = file_to_sequences(zf, f.filename, args.clip_length+1, 1, args.mirror_animations)
             sequence_list.extend(sequences)
     full_data = np.array(sequence_list)
-    frames = full_data[:, 1]
-    print("Frames collected")
-    print("Frames shape: {}".format(frames.shape))
+    clips = full_data[:, 1:]
+    print("Clips collected")
+    print("Clips shape: {}".format(clips.shape))
     # Part 4: Create a list of animations
     while len(dataset) < args.dataset_size:
-        new_animation = create_animation(frames, args.sequence_length, limits)
+        new_animation = create_animation(clips, args.sequence_length, limits)
         if new_animation is not None:
             dataset.append(new_animation)
     print("Animations created")
