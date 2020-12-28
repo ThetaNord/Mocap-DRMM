@@ -60,6 +60,13 @@ def parse_args(argv):
         type=int
     )
     parser.add_argument(
+        '--limit-multiplier',
+        dest='limit_multiplier',
+        help='multiplier applied to position time derivative limits',
+        default=0.5,
+        type=float
+    )
+    parser.add_argument(
         '--dataset-size',
         dest='dataset_size',
         help='how many animations to create for the dataset',
@@ -189,7 +196,7 @@ def file_to_sequences(zf, filename, sequence_length, step_size, mirror_animation
     return sequences
 
 # Calculate limits for maximum changes in joints between frames
-def calculate_limits(sequences):
+def calculate_limits(sequences, multiplier):
     max_speeds = np.zeros(len(CSV_COLUMNS_REORDERED))
     max_accelerations = np.zeros(len(CSV_COLUMNS_REORDERED))
     max_jerks = np.zeros(len(CSV_COLUMNS_REORDERED))
@@ -227,7 +234,7 @@ def calculate_limits(sequences):
                             max_jerks[j] = scalar_jerk
                 sequence_accelerations.append(accelerations)
             sequence_velocities.append(velocities)
-    limits = {"speed_limits": max_speeds, "acceleration_limits": max_accelerations, "jerk_limits": max_jerks}
+    limits = {"speed_limits": multiplier*max_speeds, "acceleration_limits": multiplier*max_accelerations, "jerk_limits": multiplier*max_jerks}
     return limits
 
 # Verify that adding new_frame to animation would not break given limits
@@ -275,7 +282,7 @@ def create_animation(clips, animation_length, limits, always_return=False):
         if verify_frame(animation_sequence, clip[0], limits):
             #print("Selected index: {}".format(idx))
             animation_sequence = np.concatenate((animation_sequence, clip))
-            print(animation_sequence.shape)
+            #print(animation_sequence.shape)
             clip_index.remove(idx)
             temp_index = clip_index.copy()
         else:
@@ -306,7 +313,7 @@ def create_animation_dataset(zf, files, args):
     sequences = np.array(sequences)
     print("Sequences loaded")
     # Part 2: Calculate limits
-    limits = calculate_limits(sequences)
+    limits = calculate_limits(sequences, args.limit_multiplier)
     print("Limits calculated")
     # Part 3: Get individual clips
     sequence_list = []
