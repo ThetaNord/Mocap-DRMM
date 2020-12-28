@@ -2,22 +2,21 @@ import numpy as np
 import random
 import os
 import copy
-import matplotlib.pyplot as pp
 import tensorflow as tf
 import itertools
+from math import ceil
 
 #Parameters that one may try to adjust
 regularization=0.01             #\alpha in the paper
-UnetSkipStrength=0.333          #\alpha_{skip}
+UnetSkipStrength=1.0/3.0        #\alpha_f
 epsilon=1e-8                    #\epsilon in the paper
 bwdTruncation=0.02              #\alpha_t in the paper
 fwdTruncation=0.05              #similar to bwdTruncation but applied to the forward pass membership distributions (Added after submitting the paper, seems to slightly reduce off-distribution outlier samples)
-outlierLossThreshold=None       #If not None, we ignore training samples with loss values larger than mean + stdev*outlierLossThreshold
+sigmaType="scalar"              #The paper uses scalar sigma (component covariance) for simplicity, but the code now supports per-variable sigma, i.e., diagonal covariance
 
-#Parameters that should not be touched. 
-arrayMarginalMode="elementwise"             #"global": a single w_k shared by all patch DRMMs, "elementwise": the w_k not shared
-dataDependentInitializationMode="normal"    #Defines how components are initialized based on an initial batch of data. "normal" is the default, i.e., randomizing the means from a diagonal Gaussian approximation of the input   
-gradStopStrength=1.0                        #in range 0...1, defines the strength of gradient stopping between layers
+#Parameters that should not be touched.
+arrayMarginalMode="global"                  #"global": a single w_k shared by all patch DRMMs, "elementwise": the w_k not shared (instead, separate w_k for each extracted input patch location)
+dataDependentInitializationMode="normal"    #Defines how components are initialized based on an initial batch of data. "normal" is the default, i.e., randomizing the means from a diagonal Gaussian approximation of the input
 initialSdScale=0.1                          #\sigma of a layer's components is initially set to layer input stdev * initialSdScale
 MStepPrecision=1.0                          #\rho for M-step. values other than 1 are only used for comparison in a paper image
 addLastLayerResidualNoise=False             #A value True is only used for the paper's Figure 1.
@@ -26,9 +25,8 @@ useBwdCorrection=True                       #Whether to learn and use a simple b
 averageSkipConnections=True                 #Whether to use averaged or additive encoder-decoder skip-connections. If bwd sampling perfectly reconstructs the fwd pass distributions, averaging produces unbiased results.
 
 
-
 #Helper: (partial) gradient stop.
-def stopGradient(x):
+def stopGradient(x,gradStopStrength):
     if isinstance(gradStopStrength,float) and gradStopStrength==1.0:
         return tf.stop_gradient(x)
     return gradStopStrength*tf.stop_gradient(x)+(1.0-gradStopStrength)*x
@@ -141,7 +139,7 @@ class GaussianPrior:
 
 class DataIn:
     """A container for the data fed in as a DataStream, to simplify the user interface of DRMM models"""
-    def __init__(self,data=None,mask=None,ieqs=None,minValues=None,maxValues=None,minValueWeights=None, maxValueWeights=None,priorMean=None,priorSd=None,priorWeight=None):
+    def __init__(self,data=None,mask=None,ieqs=None,minValues=None,maxValues=None,minValueWeights=None, maxValueWeights=None,priorMean=None,priorSd=None,priorWeight=None,weights=None):
         self.data=data
         self.mask=mask
         self.ieqs=ieqs
@@ -152,12 +150,13 @@ class DataIn:
         self.priorMean=priorMean
         self.priorSd=priorSd
         self.priorWeight=priorWeight
-        
+        self.weights=weights
+
 class DataStream:
     """
     Datastream class. Encapsulates the data vector x (self.tensor), known variables mask, and the The mask contains values in range 0...1, determining how much weight each sample gets in the class log probabilities
     """
-    def __init__(self,tensor:tf.Tensor,type,mask:tf.Tensor=None,nCategories:int=0,ieqConstraints=None,gaussianPrior=None,boxConstraint=None):
+    def __init__(self,tensor:tf.Tensor,type,mask:tf.Tensor=None,nCategories:int=0,ieqConstraints=None,gaussianPrior=None,boxConstraint=None,weights=None):
         self.tensor=tensor
         self.type=type
         assert(type=="continuous" or type=="discrete")
@@ -167,6 +166,7 @@ class DataStream:
         self.ieqConstraints=ieqConstraints if ieqConstraints is not None else []
         self.boxConstraint=boxConstraint
         self.gaussianPrior=gaussianPrior
+        self.weights=weights
     def __repr__(self):
         return "DataStream: shape {}, type {}, mask {}, nCategories {}".format(self.tensor.shape,self.type,self.mask,self.nCategories)
     def __str__(self):
@@ -187,6 +187,7 @@ def dataStream(dataType,shape,nCategories:int=0,useBoxConstraints=False,useGauss
     scalarShape=shape.copy()
     for i in range(len(scalarShape)):
         scalarShape[i]=1
+    weightsTensor=tf.placeholder(dtype=tf.float32,shape=[None,1],name="in_weights")
     if maxInequalities>0:
         ieqs=[]
         for i in range(maxInequalities):
@@ -213,8 +214,17 @@ def dataStream(dataType,shape,nCategories:int=0,useBoxConstraints=False,useGauss
         boxConstraint=BoxConstraint(minValues,maxValues,minValueWeights,maxValueWeights)
     else:
         boxConstraint=None
-    return DataStream(inputTensor,dataType,maskTensor,nCategories=nCategories,ieqConstraints=ieqs,gaussianPrior=gaussianPrior,boxConstraint=boxConstraint)
- 
+    return DataStream(inputTensor,dataType,maskTensor,nCategories=nCategories,ieqConstraints=ieqs,gaussianPrior=gaussianPrior,boxConstraint=boxConstraint,weights=weightsTensor)
+
+
+def stopStreamGradients(streams,gradStopStrength):
+    result=[]
+    for stream in streams:
+        s=stream.copy()
+        s.tensor=stopGradient(s.tensor,gradStopStrength)
+        result.append(s)
+    return result
+
 def expandAndReshape(arr,shape):
     if hasattr(arr,"shape"):
         newShape=list(arr.shape)
@@ -246,6 +256,7 @@ def streamFeedDict(stream:DataStream,nSamples=None,feed:DataIn=None):
     if feed is None:
         result[stream.tensor]=np.zeros(dataShape)
         result[stream.mask]=np.zeros(dataShape)
+        result[stream.weights]=np.ones([nSamples,1])
         if stream.gaussianPrior is not None:
             result[stream.gaussianPrior.mean]=np.zeros(sampleShape)
             result[stream.gaussianPrior.sd]=np.zeros(sampleShape)
@@ -272,6 +283,12 @@ def streamFeedDict(stream:DataStream,nSamples=None,feed:DataIn=None):
         result[stream.mask]=np.zeros(dataShape)
     else:
         result[stream.mask]=feed.mask
+
+    #Weights tensor
+    if feed.weights is None:
+        result[stream.weights]=np.ones([nSamples,1])
+    else:
+        result[stream.weights]=feed.weights
 
     #Gaussian prior
     if stream.gaussianPrior is not None:
@@ -301,12 +318,14 @@ def streamFeedDict(stream:DataStream,nSamples=None,feed:DataIn=None):
             for i in range(len(feed.ieqs)):
                 assert("a" in feed.ieqs[i])
                 assert("b" in feed.ieqs[i])
-                result[stream.ieqConstraints[i].a]=expandAndReshape(feed.ieqs[i]["a"],sampleShape) #np.expand_dims(feed.ieqs[i]["a"], axis=0)
-                result[stream.ieqConstraints[i].b]=expandAndReshape(feed.ieqs[i]["b"],scalarShape)
+                aNorm=np.linalg.norm(feed.ieqs[i]["a"])  #to simplify the computations, we make sure that the constraint is specified in normalized form
+                result[stream.ieqConstraints[i].a]=expandAndReshape(feed.ieqs[i]["a"]/aNorm,sampleShape) #np.expand_dims(feed.ieqs[i]["a"], axis=0)
+                result[stream.ieqConstraints[i].b]=expandAndReshape(feed.ieqs[i]["b"]/aNorm,scalarShape)
                 if "weight" in feed.ieqs[i]:
                     result[stream.ieqConstraints[i].weight]=feed.ieqs[i]["weight"]
                 else:
                     result[stream.ieqConstraints[i].weight]=1.0
+
     else:
         #if the stream does not have placeholder tensors for the inequalities, the feed should not try to specify their values
         assert(feed.ieqs is None)
@@ -373,6 +392,14 @@ def discretePdfTruncate(pdf,truncation):
     pdf/=tf.reduce_sum(pdf,axis=-1,keepdims=True)
     return pdf
 
+def discreteLogPdfTruncate(pdf,truncation):
+    if truncation is None:
+        return pdf
+    threshold=tf.reduce_max(pdf,axis=-1,keepdims=True)-tf.log(truncation)
+    pdf=pdf-1e10*tf.nn.relu(tf.sign(pdf-threshold))
+    return pdf
+
+
 def logPdfTruncate(pdf,truncation):
     truncated=discretePdfTruncate(tf.nn.softmax(pdf),truncation)
     return tf.log(truncated+1e-20)
@@ -403,14 +430,6 @@ def removeMasks(streams):
         result.append(DataStream(stream.tensor,stream.type,None,stream.nCategories))
     return result
 
-#Helper: remove masks from a list of streams
-def stopStreamGradients(streams):
-    #If no decoder (bwd pass) input data is given, construct the input data streams as batch averages of the encoder output
-    result=[]
-    for stream in streams:
-        result.append(DataStream(stopGradient(stream.tensor),stream.type,None,stream.nCategories))
-    return result
-
 
 
 #Base class for layers
@@ -419,7 +438,7 @@ class Layer:
         #each layer may have trainable variables
         self.variables=[]
         #each layer may or may not contribute to the training loss
-        self.loss=0 
+        self.loss=0
         self.bwdLoss=0  #Backward loss currently not used
     #Forward pass. Inputs is a list of DataStream instances, mode is either "training" or "inference"
     def fwd(self,inputs,mode):
@@ -444,7 +463,7 @@ def extractTensors(dataStreamList):
 
 '''
 
-A manager class for multiple layers. All models inherit from this. 
+A manager class for multiple layers. All models inherit from this.
 This class also inherits Layer, which means a LayerStack can manage multiple child stacks.
 
 '''
@@ -484,11 +503,11 @@ class LayerStack(Layer):
         #Bwd training pass for the bwd bias correction
         #Before it, we batch-average the latent pdf:s and force any remaining residuals to zero, similar to before backward sampling
         if useBwdCorrection:
-            averaged=multiStreamBatchAverage(stopStreamGradients(encoded))
+            averaged=multiStreamBatchAverage(encoded)
             for streamIdx in range(self.layers[-1].nNonLatentInputs):
                 stream=averaged[streamIdx]
                 stream.tensor=tf.zeros_like(stream.tensor)
-            self.bwd(data=stopStreamGradients(averaged),mode="training")  
+            self.bwd(data=averaged,mode="training")
 
         #data-dependent initialization pass, required before one calls the init() method
         initOutputs=self.fwd(self.inputs,"init")
@@ -496,10 +515,10 @@ class LayerStack(Layer):
             self.initOps.append(stream.tensor)
 
         #Backward sampling
-        if bwdSampling:            
+        if bwdSampling:
             #Sampling fwd and bwd passes
             encoded_bwd=self.fwd(self.inputs,"sample_fwd")
-            averaged=multiStreamBatchAverage(encoded_bwd) 
+            averaged=multiStreamBatchAverage(encoded_bwd)
             for streamIdx in range(self.layers[-1].nNonLatentInputs):
                 stream=averaged[streamIdx]
                 stream.tensor=tf.zeros_like(stream.tensor)
@@ -534,7 +553,7 @@ class LayerStack(Layer):
                     if addLastLayerResidualNoise:
                         assert(self.numInputs==1 and self.inputs[0].type=="continuous") #the residual noise is only for the paper's visualization, limited to a single continuous input stream
                         residualSd=tf.sqrt(tf.exp(layer.centroidLogVars[0]))
-                        residualNoise=tf.random_normal(tf.shape(noisySample),mean=0,stddev=residualSd)
+                        residualNoise=tf.random_normal(tf.shape(noisySamples[0]),mean=0,stddev=residualSd)
                         noisySamples[0]+=residualNoise
                     self.layerSamples.append(noisySamples)
             self.samples=samples
@@ -586,10 +605,11 @@ class LayerStack(Layer):
             self.bwdLoss=0
             self.bwdLosses=[]
         for layer in reversed(self.layers):
+            print("Bwd pass, layer {}, mode={}".format(layer.__class__.__name__,mode))
             data=layer.bwd(data,mode)
             if mode=="training":
                 self.bwdLoss+=layer.bwdLoss
-                self.bwdLosses.append(layer.bwdLoss)
+                self.bwdLosses.insert(0,layer.bwdLoss)
         return data
     def getVariables(self):
         result=[]
@@ -650,7 +670,7 @@ def deinterleaveArray(arr:tf.Tensor,width,height):
 class RMM(Layer):
     #inputs : array of [tensor,type] tuples, type = "discrete" or "continuous". For continuous variables, one can also include a mask as the third element
     #masks : array of real-valued tensors. 1 for known variable values, 0 for unknown
-    def __init__(self,nCategories:int,nNonLatentInputs=1,allowResample=True,bwdSamplingTemperature=1.0,precisionRho=0.0,inputWidth=1,inputHeight=1):
+    def __init__(self,nCategories:int,nNonLatentInputs=1,allowResample=True,bwdSamplingTemperature=1.0,precisionRho=0.0,inputWidth=1,inputHeight=1,useMaximumLikelihoodLoss=False,gradStopStrength=1.0,trainingPhase=None):
         Layer.__init__(self)
 
         #Remember the arguments for later
@@ -659,6 +679,11 @@ class RMM(Layer):
         self.allowResample=allowResample
         self.inputWidth=inputWidth
         self.inputHeight=inputHeight
+        self.gradStopStrength=gradStopStrength
+        self.useMaximumLikelihoodLoss=useMaximumLikelihoodLoss
+        self.trainingPhase=trainingPhase
+        if trainingPhase is None:
+            raise Exception("Training phase argument missing!")
 
         #bookkeeping: variables will be created later, once we know the input streams
         self.variablesCreated=False
@@ -707,14 +732,21 @@ class RMM(Layer):
                 self.nParameters+=M*N
                 self.centroids.append(centroids)
                 self.variables.append(centroids)
-                centroidLogVar=tf.Variable(initial_value=np.log(initialSdScale/np.power(N,1.0/M)),dtype=tf.float32,trainable=True,name='logvar_{}'.format(inputIdx))
+                if sigmaType=="scalar":
+                    centroidLogVar=tf.Variable(initial_value=np.log(initialSdScale/np.power(N,1.0/M)),dtype=tf.float32,trainable=True,name='logvar_{}'.format(inputIdx))
+                elif sigmaType=="diagonal":
+                    centroidLogVar = tf.Variable(initial_value=np.log(initialSdScale / np.power(N, 1.0 / M))*np.ones([1,M]),
+                                                 dtype=tf.float32, trainable=True, name='logvar_{}'.format(inputIdx))
+                else:
+                    raise Exception("unknown sigma type: {}".format(sigmaType))
+
                 self.nParameters+=1
                 self.variables.append(centroidLogVar)
                 self.centroidLogVars.append(centroidLogVar)
 
             elif inputType=="discrete":
                 initialSpread=0.001
-                #Version that stores the centroids in log-space. 
+                #Version that stores the centroids in log-space.
                 initialValue=np.random.uniform(0,initialSpread,size=varSize)
                 centroids=tf.Variable(initial_value=initialValue,dtype=tf.float32,name='centroids_{}'.format(inputIdx))
                 self.nParameters+=M*N
@@ -726,10 +758,12 @@ class RMM(Layer):
             else:
                 raise Exception("Invalid input type")
     def fwd(self,inputs,mode):
+        inputs=stopStreamGradients(inputs,self.gradStopStrength)
         #Some input checks
         for stream in inputs:
             assert(len(stream.tensor.shape)==len(inputs[0].tensor.shape))  #all streams must have the same shape dimensionality (e.g., can't mix images and vectors)
             assert(len(stream.tensor.shape)==2)
+
 
         #create TensorFlow variables that are shared between all passes
         #(we could not create these in the constructor, as we need to know the input streams first)
@@ -737,17 +771,20 @@ class RMM(Layer):
             self.createVariables(inputs)
 
         #some helpers
-        batchSize=tf.shape(inputs[0].tensor)[0] 
+        batchSize=tf.shape(inputs[0].tensor)[0]
 
         N=self.nCategories
         nInputs=self.nInputs
         self.inputs=inputs
+        sampleWeights=inputs[-1].weights  #convention: sample weights are carried with the last input stream so that weights updated by this layer can be passed on with the new stream added by this layer's latent
+        if sampleWeights is None:
+            sampleWeights=tf.ones([batchSize,1])
 
         #Randomize input sample indices for data-dependent initialization
         if mode=="init":
             idxs = tf.range(batchSize)
             ridxs = tf.random_shuffle(idxs)[:N]
- 
+
         #Compute log memberships based on latent and non-latent variable inputs
         membershipShape=[batchSize,N]
         self.nonLatentLogMemberships=tf.zeros(membershipShape)     #first init to zero
@@ -756,13 +793,13 @@ class RMM(Layer):
         self.inputInfoSum=tf.zeros([batchSize,1])
         for inputIdx in range(nInputs):
             input=inputs[inputIdx].tensor
-            input=stopGradient(input)
+            input=input
             inputType=inputs[inputIdx].type
             centroids=self.centroids[inputIdx]
             mask=inputs[inputIdx].mask
-            mask=stopGradient(mask)
+            mask=tf.stop_gradient(mask)
             if inputIdx<self.nNonLatentInputs:
-                #inputInfoSum: this will be zero for inputs with no known value and no priors or constraints, non-zero otherwise 
+                #inputInfoSum: this will be zero for inputs with no known value and no priors or constraints, non-zero otherwise
                 #this is used in determining the encoder-decoder skip-connection weights
                 self.inputInfoSum+=tf.reduce_sum(mask,axis=-1,keepdims=True)
                 if inputs[inputIdx].gaussianPrior is not None:
@@ -781,7 +818,7 @@ class RMM(Layer):
                 if mode=="init":
                     inputToGatherFrom=input
                     inputMean=tf.reduce_mean(inputToGatherFrom,axis=0,keepdims=True)
-                    inputVar=tf.reduce_mean(tf.square(inputToGatherFrom-inputMean),axis=0)
+                    inputVar=tf.reduce_mean(tf.square(inputToGatherFrom-inputMean),axis=0,keepdims=True)
                     inputSd=tf.sqrt(inputVar)
                     if dataDependentInitializationMode=="select":
                         #Assign class prototypes to randomly selected input samples.
@@ -802,9 +839,14 @@ class RMM(Layer):
                     #Init centroid stdevs proportional to average distances between the centroids, assuming uniform distribution
                     #With 1D data, we simply divide the sd of data by the number of classes. In higher dimensions,
                     #the distance decreases much more slowly with the number of classes, as more centroids are needed to fill the space.
-                    inputVar=tf.reduce_mean(inputVar)
-                    inputSd=tf.sqrt(inputVar)
-                    initSd=(initialSdScale*inputSd)/np.power(N,1.0/M)
+                    if sigmaType=="scalar":
+                        inputVar = tf.reduce_mean(inputVar)
+                        inputSd = tf.sqrt(inputVar)
+                        initSd=(initialSdScale*inputSd)/np.power(N,1.0/M)
+                    elif sigmaType=="diagonal":
+                        initSd=initialSdScale * inputSd
+                    else:
+                        raise Exception("Unknown sigma type: {}".format(sigmaType))
                     centroidLogvar=tf.assign(centroidLogVar,tf.log(tf.square(initSd)))
 
                 #The membership computation needs both log variances and variances
@@ -813,22 +855,24 @@ class RMM(Layer):
 
                 #membership log-probabilities, resulting in an batchSize-by-N tensor
                 #logp of diagonal gaussian: -0.5*[tf.square(x-mean)/var+logVar]
-                streamLogMemberships=-0.5*(sqMahalanobisDistances(input,centroids,centroidSd,mask)+tf.reduce_sum(mask,axis=-1,keepdims=True)*centroidLogVar)
+                streamLogMemberships=-0.5*(sqMahalanobisDistances(input,centroids,centroidSd,mask)+tf.reduce_sum(mask*centroidLogVar,axis=-1,keepdims=True))
 
                 '''
-                Handle inequality constraints of type a'x+b=a'x+a'ab=a'(x+ab)>0
+                Handle inequality constraints of type a'x+b > 0,
                 i.e., defining a half-space of valid x on one side of a constraint hyperplane.
                 We integrate the Gaussian pdf of each mixture component over the half-space,
                 and use that as a membership probability multiplier. In other words, the multiplier equals the
                 probability mass within the valid half-space
-                Simplification: As each component is isotropic, and a'x+b is the distance from the hyperplane,
+                Simplification: As each component is isotropic, and a'x+b is the distance from the hyperplane (we assume norm(a)=1, which is ensured by streamFeedDict()),
                 positive distances indicating valid x, we only need to compute p=(a'mu+b)/sigma and integrate a
                 standard 1D Gaussian from -inf to p, which equals the CDF of standard Gaussian at p, i.e.,
                 0.5*(1+erf(p/sqrt(2))
                 '''
                 if mode=="sample_fwd": #only consider the constraints during inference
                     for c in inputs[inputIdx].ieqConstraints:
-                        p=(tf.tensordot(c.a,centroids,[-1,-1])+c.b)/centroidSd
+                        if sigmaType!="scalar":
+                            print("WARNING: use of the a'x+b>0 inequalities is inaccurate with non-scalar sigma")
+                        p=(tf.tensordot(c.a,centroids,[-1,-1])+c.b)/tf.sqrt(tf.reduce_mean(centroidVar))  #take mean to approximate if non-scalar sigma
                         cdf=0.5*(1.0+tf.erf(p/tf.sqrt(2.0)))
                         streamLogMemberships+=c.weight*tf.log(cdf+epsilon)
 
@@ -841,7 +885,7 @@ class RMM(Layer):
                     if bc is not None:
                         #compute a [nSamples,nComponents,nVars] tensor of maxValue-centroidValue,
                         #from the [nSamples,nVars] and [nComponents,nVars] tensors of maxValues and component means
-                        #(recall that N=nComponents, M=nVars) 
+                        #(recall that N=nComponents, M=nVars)
                         expandedValues=tf.reshape(bc.maxValues,[-1,1,M])
                         expandedCentroids=tf.reshape(centroids,[1,N,M])
                         p=(expandedValues-expandedCentroids)/centroidSd
@@ -858,13 +902,13 @@ class RMM(Layer):
                         streamLogMemberships+=tf.reduce_sum(tf.reshape(bc.minValueWeights,[-1,1,M])*tf.log(cdf+epsilon),axis=-1)
 
                 '''
-                Handle the optional Gaussian prior. For each mixture component, we compute the 
+                Handle the optional Gaussian prior. For each mixture component, we compute the
                 integral of the component PDF multiplied with the prior, and use that as a membership probability
-                scaling factor. 
+                scaling factor.
 
                 We compute this scaling factor separately for each variable, assuming diagonal prior covariance.
                 The scale factors combine multiplicatively, i.e., we can add the logs.
-               
+
                 Equation given in: http://luispedro.org/files/derivations/gaussian_integral.pdf (computer checked):
 
                 integrate(N(x | mu1,sigma1^2)N(x | mu2,sigma2^2))=N(mu1 | mu2, sigma1^2+sigma2^2)
@@ -905,68 +949,69 @@ class RMM(Layer):
         else:
             logMarginalMemberships=self.logMarginalMemberships
 
-            
+
         #Log-memberships, including modified log-memberships for training E-step, M-step, and the U-net skips
         self.mStepLogMemberships=self.nonLatentLogMemberships+logMarginalMemberships+MStepPrecision*self.latentLogMemberships
         if modifiedEStep:
             self.eStepLogMemberships=self.nonLatentLogMemberships+self.precisionRho*self.latentLogMemberships
         else:
             self.eStepLogMemberships=self.mStepLogMemberships
-        
+
         #self.logMemberships will hold the logits that are passed on to the next layer
-        self.logMemberships=self.mStepLogMemberships 
+        self.logMemberships=self.mStepLogMemberships
 
 
         #density estimation
-        logM=self.mStepLogMemberships
-        p=tf.reduce_sum(tf.exp(logM-tf.reduce_max(logM)),axis=-1)  
-        self.p=tf.reshape(p,[-1,1])
-        self.logp=tf.log(self.p)
+        def stableMixtureLogDensity(logM):
+            #sum(exp(logm1+shift)+exp(logm2+shift)+...)=exp(shift)*sum(exp(logm1)+exp(logm2)+...)
+            #=>log(sum(exp(logm1)+exp(logm2)+...))=log(sum(exp(logm1+shift)+exp(logm2+shift)+...))-shift
+            logShift=-tf.stop_gradient(tf.reduce_max(logM,axis=-1,keepdims=True)) #to ensure no underfloaws
+            p=tf.reduce_sum(tf.exp(logM+logShift),axis=-1,keepdims=True)
+            return tf.log(p)-logShift
+        self.logp=stableMixtureLogDensity(self.mStepLogMemberships)
+        self.logp+=tf.log(sampleWeights)
+        self.p=tf.exp(self.logp)
 
         #density estimation only based on non-latent memberships (for DRMMBlockHierarchy, which discards the non-latent input stream residuals, assuming that they contain no information)
-        logM=self.nonLatentLogMemberships
-        p=tf.reduce_sum(tf.exp(logM-tf.reduce_max(logM)),axis=-1)  
-        self.nonLatentP=tf.reshape(p,[-1,1])
-        self.nonLatentLogP=tf.log(self.nonLatentP)
+        self.nonLatentLogP=stableMixtureLogDensity(self.nonLatentLogMemberships)
+        self.nonLatentLogP+=tf.log(sampleWeights)
 
 
         #Training losses
         if mode=="training":
             indices=tf.argmax(self.eStepLogMemberships,axis=-1)
             self.eStepMemberships=tf.one_hot(indices=indices,depth=self.eStepLogMemberships.shape[-1].value)
-            EMLosses= -tf.reduce_sum(tf.stop_gradient(self.eStepMemberships)*self.mStepLogMemberships,axis=-1) 
-            if outlierLossThreshold is not None:
-                lossMean=tf.reduce_mean(EMLosses)
-                lossSd=tf.sqrt(tf.reduce_mean(tf.square(EMLosses-lossMean)))
-                normalizedLosses=tf.nn.relu(EMLosses-lossMean)/(lossSd*outlierLossThreshold)
-                lossWeights=tf.stop_gradient(tf.exp(-0.5*tf.square(normalizedLosses)))
-            else:
-                lossWeights=1.0
-            EMLoss=tf.reduce_mean(lossWeights*EMLosses)
+            EMLosses= -tf.reduce_sum(tf.stop_gradient(self.eStepMemberships)*self.mStepLogMemberships,axis=-1)
+            EMLoss=tf.reduce_mean(sampleWeights[:,0]*EMLosses)
 
 
             #Regularization loss: similar to above, but treating centroids as data, and data as centroids.
             #This prevents orphan centroids, as a centroid being very far from all data points causes a large loss.
             #Obviously, we assume large enough minibatch sizes such that the batches are representative.
-            self.regularizationLoss=-regularization*tf.reduce_mean(tf.reduce_max(self.nonLatentLogMemberships,axis=0)) 
+            self.regularizationLoss=-regularization*tf.reduce_mean(tf.reduce_max(self.nonLatentLogMemberships,axis=0))
 
             #Total loss
-            self.loss=EMLoss+self.regularizationLoss
+            decayingPhase=tf.clip_by_value(tf.square(2.0-2.0*self.trainingPhase),0,1)
+            self.loss=EMLoss+decayingPhase*self.regularizationLoss
+            self.maximumLikelihoodLoss=-tf.reduce_mean(self.logp)+decayingPhase*self.regularizationLoss
+            if self.useMaximumLikelihoodLoss:
+                mlMix=self.precisionRho  #kludge... TODO: rework the passing of curriculum parameters
+                self.loss=(1.0-mlMix)*self.loss+mlMix*self.maximumLikelihoodLoss
 
-
-        #Convert membership logits to probabilities 
+        #Convert membership logits to probabilities
         self.memberships=tf.nn.softmax(self.logMemberships)
         self.memberships=discretePdfTruncate(self.memberships,fwdTruncation)
-        self.skipMemberships=self.memberships   #a trick to reduce bwd sampling artefacts: the skip connection signal is extracted before sampling, to make the batch-averages smoother. 
+        self.skipMemberships=self.memberships   #a trick to reduce bwd sampling artefacts: the skip connection signal is extracted before sampling, to make the batch-averages smoother.
 
         #Determine the layer's latent variable (component membership per input vector) by sampling or taking argmax
-        if mode=="training" or mode=="init":
+        if (mode=="training" or mode=="init"):
             indices=tf.argmax(self.memberships,axis=-1)
+            self.memberships=tf.one_hot(indices=indices,depth=self.memberships.shape[-1].value)
         else:
             probs=self.memberships
             distr=tf.distributions.Categorical(probs=probs)
             indices=distr.sample()
-        self.memberships=tf.one_hot(indices=indices,depth=self.memberships.shape[-1].value)
+            self.memberships=tf.one_hot(indices=indices,depth=self.memberships.shape[-1].value)
 
         #Compute reconstructed inputs and reconstruction residuals and losses.
         xHat=self.reconstruct_indices(indices,centroids=initialCentroids if mode=="init" else None)
@@ -979,9 +1024,8 @@ class RMM(Layer):
         #The latent output mask is always 1, as uncertainty is captured by the distribution of the sampled latent variables.
         outputMask=tf.ones(membershipShape)
         self.outputMask=outputMask
-        outputs.append(DataStream(stopGradient(discretePdfLog(self.memberships,self.nCategories)),"discrete",nCategories=self.nCategories,mask=outputMask))
-
-        return outputs
+        outputs.append(DataStream(discretePdfLog(self.memberships,self.nCategories),"discrete",nCategories=self.nCategories,mask=outputMask,weights=sampleWeights))
+        return stopStreamGradients(outputs,self.gradStopStrength)
 
     def meanInputSd(self):
         result=0
@@ -995,14 +1039,14 @@ class RMM(Layer):
             return 1.0
         return tf.sqrt(result/nContinuous)
 
-    def bwd(self,data,mode):     
+    def bwd(self,data,mode):
         logBwdMemberships=data[-1].tensor
         arrayBatchSize=tf.shape(logBwdMemberships)[0]//(self.inputWidth*self.inputHeight)
         #Sample the memberships if needed
         if mode=="reconstruct_onehot":
             indices=tf.argmax(logBwdMemberships,axis=-1)
         else:
-            #U-net -style encoder-decoder skip-connections. The skip connection weight is set to zero if all the encoder inputs are unknown (i.e., sign(sum(masks))==0) 
+            #U-net -style encoder-decoder skip-connections. The skip connection weight is set to zero if all the encoder inputs are unknown (i.e., sign(sum(masks))==0)
             if (UnetSkipStrength is not None) and mode!="training":
                 skipWeight=UnetSkipStrength*tf.sign(self.inputInfoSum)
                 if self.inputWidth>1 or self.inputHeight>1:
@@ -1023,38 +1067,39 @@ class RMM(Layer):
             #Learn and apply the bias correction. The correction is multiplied by sign of bwdSamplingTemperature so that
             #it is not applied for layers that do not sample (temperature 0)
             if useBwdCorrection:
-                #Expand the bwd marginal memberships to same shape as the batch if needed
-                if (self.inputWidth>1 or self.inputHeight>1) and arrayMarginalMode=="elementwise":
-                    #The marginal memberships are of shape [1,width,height,nCategories].
-                    #The log-memberships are of shape [-1,nCategories], with array elements interleaved.
-                    #To allow adding the marginals to the We must expand the marginals to [nBatch,width,height,nCategories],
-                    #and then flatten to [-1,nCategories]
-                    logBwdMarginalMemberships=tf.broadcast_to(self.logBwdMarginalMemberships,[arrayBatchSize,self.inputWidth,self.inputHeight,self.nCategories])
-                    logBwdMarginalMemberships=tf.reshape(logBwdMarginalMemberships,[-1,self.nCategories])
+                #If we do not process arrays or if arrayMarginalMode!="elementWise", things are simple:
+                if not((self.inputWidth>1 or self.inputHeight>1) and arrayMarginalMode=="elementwise"):
+                    logBwdMemberships=self.logBwdMarginalMemberships + tf.stop_gradient(logBwdMemberships)
+                    if mode=="training":
+                        #Bias correction loss: batch-averages of bwd memberships and fwd memberships should match
+                        targets=tf.stop_gradient(discretePdfBatchAverage(self.skipMemberships,self.nCategories))
+                        logits=tf.log(discretePdfBatchAverage(tf.nn.softmax(logBwdMemberships),nCategories=self.nCategories))
+                        self.bwdLoss=-tf.reduce_mean(tf.reduce_sum(targets*logits,axis=-1))
+                #Otherwise, we have to do a bit of interleaving and deinterleaving
                 else:
-                    logBwdMarginalMemberships=self.logBwdMarginalMemberships
-
-                logBwdMemberships=tf.sign(self.bwdSamplingTemperature)*logBwdMarginalMemberships + stopGradient(logBwdMemberships)
-                if mode=="training":
-                    #Bias correction loss: batch-averages of bwd memberships and fwd memberships should match 
-                    targets=tf.stop_gradient(discretePdfBatchAverage(self.eStepMemberships,self.nCategories))
-                    logits=tf.log(discretePdfBatchAverage(tf.nn.softmax(logBwdMemberships),nCategories=self.nCategories))
-                    self.bwdLoss=-tf.reduce_mean(tf.reduce_sum(targets*logits,axis=-1))
+                    logBwdMemberships=deinterleaveArray(logBwdMemberships,self.inputWidth,self.inputHeight)
+                    logBwdMemberships=self.logBwdMarginalMemberships + tf.stop_gradient(logBwdMemberships)
+                    if mode=="training":
+                        #Bias correction loss: batch-averages of bwd memberships and fwd memberships should match
+                        targets=tf.stop_gradient(discretePdfBatchAverage(deinterleaveArray(self.skipMemberships,self.inputWidth,self.inputHeight),self.nCategories))
+                        logits=tf.log(discretePdfBatchAverage(tf.nn.softmax(logBwdMemberships),nCategories=self.nCategories))
+                        self.bwdLoss=-tf.reduce_mean(tf.reduce_sum(targets*logits,axis=-1))
+                    logBwdMemberships=interleaveArray(logBwdMemberships)
 
             #Truncate
             logBwdMemberships=logPdfTruncate(logBwdMemberships,bwdTruncation)
 
-            #Sample
-            probs=softmaxWithTemperature(logBwdMemberships,self.bwdSamplingTemperature)
+            #Sample. Always use temperature = 1 when training to learn the bias correction, but allow temperature control for inference
+            probs=softmaxWithTemperature(logBwdMemberships,1.0 if mode=="training" else self.bwdSamplingTemperature)
             distr=tf.distributions.Categorical(probs=probs)
             indices=distr.sample()
 
         #Reconstruct this layer's input
-        xHat=stopStreamGradients(self.reconstruct_indices(indices))  #stop gradients to prevent the bwd loss from affecting fwd pass parameters
+        xHat=self.reconstruct_indices(indices)  #stop gradients to prevent the bwd loss from affecting fwd pass parameters
         self.xHat_bwd=xHat
 
         #Combine with residual
-        x=self.residual_inverse(xHat,stopStreamGradients(data[:-1]))
+        x=self.residual_inverse(xHat,data[:-1])
         return x
     def reconstruct(self,memberships,centroids=None):
         if centroids is None:
@@ -1066,8 +1111,6 @@ class RMM(Layer):
             if inputType=="continuous":
                 reconstructed=tf.matmul(memberships,centroids[inputIdx])
             else:
-                #reconstructed=tf.matmul(memberships,centroids[inputIdx])
-                #reconstructed=streamLogSoftmax(reconstructed,self.inputs[inputIdx].nCategories)
                 reconstructed=tf.matmul(memberships,streamSoftmax(centroids[inputIdx],self.inputs[inputIdx].nCategories))
                 reconstructed/=tf.reduce_sum(reconstructed,axis=-1,keepdims=True)
                 reconstructed=discretePdfLog(reconstructed,self.inputs[inputIdx].nCategories)
@@ -1090,7 +1133,6 @@ class RMM(Layer):
         residuals_list=[]
         for inputIdx in range(len(x)):
             input=x[inputIdx].tensor
-            input=stopGradient(input)
             inputType=x[inputIdx].type
             rIeqConstraints=None
             rGaussianPrior=None
@@ -1122,13 +1164,13 @@ class RMM(Layer):
                 r=streamLogSoftmax(r,nCategories=x[inputIdx].nCategories)
             else:
                 raise Exception("Invalid input type")
-            residuals_list.append(DataStream(r,inputType,x[inputIdx].mask,x[inputIdx].nCategories,ieqConstraints=rIeqConstraints,gaussianPrior=rGaussianPrior,boxConstraint=rBoxConstraint))
+            residuals_list.append(DataStream(r,inputType,x[inputIdx].mask,x[inputIdx].nCategories,ieqConstraints=rIeqConstraints,gaussianPrior=rGaussianPrior,boxConstraint=rBoxConstraint,weights=x[inputIdx].weights))
         return residuals_list
 
     def residual_inverse(self,xHat,r):
         x_list=[]
         for inputIdx in range(self.nInputs):
-            inputType=self.inputs[inputIdx].type 
+            inputType=self.inputs[inputIdx].type
             rt=r[inputIdx].tensor
             if inputType=="continuous":
                 x=xHat[inputIdx].tensor+rt
@@ -1140,45 +1182,54 @@ class RMM(Layer):
             x_list.append(DataStream(x,inputType,mask=None,nCategories=xHat[inputIdx].nCategories))
         return x_list
 
- 
+
 class DRMM(LayerStack):
-    def __init__(self,sess,nLayers,nComponentsPerLayer,inputs,initialLearningRate=0.001,finalEStepPrecision=1.0,useBwdSampling=False,train=True):
+    def __init__(self,sess,nLayers,nComponentsPerLayer,inputs,initialLearningRate=0.001,finalEStepPrecision=1.0,useBwdSampling=False,train=True,initialEStepPrecision=0.0,endToEnd=True):
         self.sess=sess
         if type(inputs) is DataStream:
-            inputs=[inputs]  #everything below expects a list of DataStream objects     
+            inputs=[inputs]  #everything below expects a list of DataStream objects
         self.inputs=inputs.copy()
         LayerStack.__init__(self,sess)
         self.useBwdSampling=useBwdSampling
+        useMaximumLikelihoodLoss=False #endToEnd
         if train:
-            self.trainingPhase=tf.Variable(dtype=tf.float32,initial_value=0,trainable=False)
-            thresholdedPhase=0.5+0.5*tf.tanh(20.0*(self.trainingPhase-1.0/2.0))
-            self.precisionRho=finalEStepPrecision*thresholdedPhase 
+            self.trainingPhase=tf.Variable(dtype=tf.float32,initial_value=1.0,trainable=False)
+            thresholdedPhase=tf.nn.relu(tf.sign(self.trainingPhase-1.0/2.0))
+            thresholdedPhase2=tf.nn.relu(tf.sign(self.trainingPhase-3.0/4.0))
+            self.precisionRho=initialEStepPrecision+(finalEStepPrecision-initialEStepPrecision)*thresholdedPhase
             decayingPhase=tf.clip_by_value(tf.square(2.0-2.0*self.trainingPhase),0,1)
             self.learningRate=initialLearningRate*decayingPhase  #first keep constant, start decaying quadratically in the middle
+            self.thresholdedPhase=thresholdedPhase
+            gradStopStrength=1.0-thresholdedPhase2 if endToEnd else 1.0
         for i in range(nLayers):
-            self.add(RMM(nComponentsPerLayer,nNonLatentInputs=len(inputs),precisionRho=self.precisionRho if train else finalEStepPrecision))
+            self.add(RMM(nComponentsPerLayer,nNonLatentInputs=len(inputs),precisionRho=self.precisionRho if train else finalEStepPrecision,useMaximumLikelihoodLoss=useMaximumLikelihoodLoss,gradStopStrength=gradStopStrength,trainingPhase=self.trainingPhase))
         self.build(inputs,bwdSampling=useBwdSampling)
         if useBwdCorrection:
             self.loss+=self.bwdLoss
         if train:
             self.optimizer=tf.train.AdamOptimizer(learning_rate=self.learningRate)
             self.optimize=self.optimizer.minimize(self.loss)
+            self.pretrain=self.optimizer.minimize(self.loss)
+
     def train(self,phase,dataBatch):
         self.trainingPhase.load(phase,self.sess)
+        isPretraining=phase<=0.5
         feed_dict={}
         if not isinstance(dataBatch,list):
             dataBatch=[dataBatch]
         for i in range(len(self.inputs)):
             feed_dict[self.inputs[i].tensor]=dataBatch[i]
             feed_dict[self.inputs[i].mask]=np.ones_like(dataBatch[i])
-        loss,lr,rho,temp=self.sess.run([self.loss,self.learningRate,self.precisionRho,self.optimize],feed_dict)
-        return {"loss":loss,"lr":lr,"rho":rho}
+            feed_dict[self.inputs[i].weights]=np.ones([dataBatch[i].shape[0],1])
+        loss,lr,rho,temp,mlLoss=self.sess.run([self.loss,self.learningRate,self.precisionRho,self.pretrain if isPretraining else self.optimize,self.layers[-1].maximumLikelihoodLoss],feed_dict)
+        logp=-mlLoss
+        return {"loss":loss,"lr":lr,"rho":rho,"logp":np.mean(logp)}
     def sample(self,nSamples=None,inputs=None,getProbabilities=False,sorted=True):
         """
         Generate a batch ofsamples.
 
         Parameters:
-        inputs      DataIn instance or a list of DataIn instances if this model has multiple input streams. 
+        inputs      DataIn instance or a list of DataIn instances if this model has multiple input streams.
                     Use None for unconditional sampling (Note: in this case nSamples must not be None)
         nSamples    Number of samples to generate. Can be None if defined through the shape of the input data batch.
 
@@ -1190,7 +1241,7 @@ class DRMM(LayerStack):
         feed_dict={}
         if isinstance(inputs,DataIn):
             assert(self.numInputs==1)
-            #If the caller passed in a single DataIn instance instead of a list of them, 
+            #If the caller passed in a single DataIn instance instead of a list of them,
             #wrap the instance in a list, and remember to unwrap the return value
             inputs=[inputs]
         for i in range(len(self.inputs)):
@@ -1203,9 +1254,10 @@ class DRMM(LayerStack):
                     #This allows more useful probability estimates for samples with incorrect values.
                     forcedSamples=samples[i]
                     if (inputs is not None) and (inputs[i] is not None) and (inputs[i].mask is not None):
-                        forcedSamples=inputs[i].data*inputs[i].mask+samples[i]*(1.0-inputs[i].mask) 
-                    feed_dict[self.inputs[i].tensor]=forcedSamples 
+                        forcedSamples=inputs[i].data*inputs[i].mask+samples[i]*(1.0-inputs[i].mask)
+                    feed_dict[self.inputs[i].tensor]=forcedSamples
                     feed_dict[self.inputs[i].mask]=np.ones_like(samples[i])
+
                 probabilities=self.sess.run(self.p,feed_dict)
             else:
                 samples,probabilities=self.sess.run([self.samples,self.p],feed_dict)
@@ -1219,20 +1271,20 @@ class DRMM(LayerStack):
         if self.numInputs==1:
             samples=samples[0]
         if getProbabilities:
-            return samples,probabilities 
+            return samples,probabilities
         else:
             return samples
 
 
 
-#the following three methods are modified from from https://stackoverflow.com/questions/44047753/reconstructing-an-image-after-using-extract-image-patches     
+#the following three methods are modified from from https://stackoverflow.com/questions/44047753/reconstructing-an-image-after-using-extract-image-patches
 def extract_patches(x,patchSize,stride):
     return tf.extract_image_patches(
         x,
         patchSize, #patch size
         stride, #stride
         (1, 1, 1, 1),
-        padding="SAME"  
+        padding="SAME"
     )
 
 #x is only for shape
@@ -1276,8 +1328,8 @@ class ExtractPatches(Layer):
             def singleToBatch(tensor):
                 return tf.broadcast_to(tensor,batchShape)
             if stream.gaussianPrior is not None:
-                stream.gaussianPrior.mean=process(singleToBatch(stream.gaussianPrior.mean))            
-                stream.gaussianPrior.sd=process(singleToBatch(stream.gaussianPrior.sd))            
+                stream.gaussianPrior.mean=process(singleToBatch(stream.gaussianPrior.mean))
+                stream.gaussianPrior.sd=process(singleToBatch(stream.gaussianPrior.sd))
 
             #process box constraints
             if stream.boxConstraint is not None:
@@ -1306,7 +1358,7 @@ class ExtractPatches(Layer):
                 #ensure proper log-pdf shift
                 tensor=streamLogSoftmax(tensor,stream.nCategories)
             result.append(DataStream(tensor,stream.type,mask=None,nCategories=stream.nCategories))
-        return result        
+        return result
 
 
 
@@ -1331,8 +1383,8 @@ class InterleavePatches(Layer):
             stream.mask=process(stream.mask)
             #process the Gaussian prior
             if stream.gaussianPrior is not None:
-                stream.gaussianPrior.mean=process(stream.gaussianPrior.mean)            
-                stream.gaussianPrior.sd=process(stream.gaussianPrior.sd)            
+                stream.gaussianPrior.mean=process(stream.gaussianPrior.mean)
+                stream.gaussianPrior.sd=process(stream.gaussianPrior.sd)
             #process box constraints
             if stream.boxConstraint is not None:
                 stream.boxConstraint.minValues=process(stream.boxConstraint.minValues)
@@ -1353,7 +1405,7 @@ class InterleavePatches(Layer):
         for streamIdx in range(len(data)):
             inputTensor=self.inputs[streamIdx].tensor
             stream=data[streamIdx]
-            tensor=tf.reshape(stream.tensor,[-1,inputTensor.shape[1].value,inputTensor.shape[2].value,inputTensor.shape[3].value])            
+            tensor=tf.reshape(stream.tensor,[-1,inputTensor.shape[1].value,inputTensor.shape[2].value,inputTensor.shape[3].value])
             result.append(DataStream(tensor,stream.type,None,stream.nCategories))
         return result
 
@@ -1369,7 +1421,7 @@ class DeinterleavePatches(Layer):
         shape2=self.interleavePatches.inputs[0].tensor.shape[2].value
 
         for stream in inputs:
-            tensor=tf.reshape(stream.tensor,[-1,shape1,shape2,stream.tensor.shape[1].value])            
+            tensor=tf.reshape(stream.tensor,[-1,shape1,shape2,stream.tensor.shape[1].value])
             mask=tf.reshape(stream.mask,[-1,shape1,shape2,stream.mask.shape[1].value])
             outputs.append(DataStream(tensor,stream.type,mask,stream.nCategories))
             idx+=1
@@ -1379,7 +1431,7 @@ class DeinterleavePatches(Layer):
             return None
         result=[]
         for stream in data:
-            tensor=tf.reshape(stream.tensor,[-1,stream.tensor.shape[3].value])            
+            tensor=tf.reshape(stream.tensor,[-1,stream.tensor.shape[3].value])
             #mask=stream.mask
             #if mask is not None:
             #    mask=tf.reshape(mask,[-1,mask.shape[3].value*self.shape1*self.shape2])
@@ -1409,7 +1461,7 @@ class Reshape(Layer):
             tensor=stream.tensor
             origShape=tf.shape(self.inputs[streamIdx].tensor)
             tensor=tf.reshape(tensor,origShape)
-            result.append(DataStream(tensor,stream.type,None,stream.nCategories))    
+            result.append(DataStream(tensor,stream.type,None,stream.nCategories))
         return result
 
 class Flatten(Layer):
@@ -1434,31 +1486,36 @@ class Flatten(Layer):
             w=self.inputs[streamIdx].tensor.shape[1].value
             h=self.inputs[streamIdx].tensor.shape[2].value
             tensor=tf.reshape(tensor,[-1,w,h,tensor.shape[1].value//(w*h)])
-            result.append(DataStream(tensor,stream.type,None,stream.nCategories))    
+            result.append(DataStream(tensor,stream.type,None,stream.nCategories))
         return result
 
 #Helper class for discarding streams during forward pass and adding them back on backward pass.
-#To propagate uncertainty and reduce variance, we set the masks of remaining streams to zero if all the discarded streams 
+#To propagate uncertainty and reduce variance, we set the masks of remaining streams to zero if all the discarded streams
 #were unknown (i.e., had zero masks). It is assumed that the discarded streams are the original inputs to a DRMM block, i.e.,
 #if the discarded streams are unknown, the outputs should also be unknown. The output latent variable distribution already
 #captures that uncertainty, but is inaccurate with small batch sizes.
 class DiscardResiduals(Layer):
-    def __init__(self,nDiscarded:int):
+    def __init__(self,nDiscarded:int,blockLastLayer=True):
         Layer.__init__(self)
         self.nDiscarded=nDiscarded
+        self.blockLastLayer=blockLastLayer
     def fwd(self,inputs,mode):
         self.inputs=inputs.copy()
         outputs=[]
         meanMask=tf.reduce_mean(inputs[0].mask,axis=-1,keepdims=True)
         for i in range(1,self.nDiscarded):
             meanMask+=tf.reduce_mean(inputs[i].mask,axis=-1,keepdims=True)
-        meanMask=tf.sign(meanMask)                 
+        meanMask=tf.sign(meanMask)
         #Loop over kept streams, copy to output and multiply output masks with the means
         for i in range(self.nDiscarded,len(inputs)):
             outputs.append(inputs[i].copy())
-            outputs[-1].mask*=meanMask 
+            outputs[-1].mask*=meanMask
         return outputs
     def bwd(self, data, mode):
+        #If this is the last layer of a block and this is a training pass, we route the fwd pass outputs backwards after batch-averaging.
+        #This is because of the staged training: The bwd bias correction training doesn't depend on the later stages.
+        if self.blockLastLayer and mode=="training":
+            return stopStreamGradients(multiStreamBatchAverage(self.inputs),1.0)
         if data is None:
             return None
         result=[]
@@ -1466,7 +1523,7 @@ class DiscardResiduals(Layer):
         for i in range(self.nDiscarded):
             tensor=tf.zeros_like(self.inputs[i].tensor)
             result.append(DataStream(tensor,self.inputs[i].type,None,self.inputs[i].nCategories))
-        #Copy the kept streams
+        #Pass the bwd input streams forward as is
         for stream in data:
             result.append(stream)
         return result
@@ -1494,8 +1551,8 @@ class Reshape1Dto2D(Layer):
             stream.mask=process(stream.mask)
             #process the Gaussian prior
             if stream.gaussianPrior is not None:
-                stream.gaussianPrior.mean=process(stream.gaussianPrior.mean)            
-                stream.gaussianPrior.sd=process(stream.gaussianPrior.sd)            
+                stream.gaussianPrior.mean=process(stream.gaussianPrior.mean)
+                stream.gaussianPrior.sd=process(stream.gaussianPrior.sd)
             #process box constraints
             if stream.boxConstraint is not None:
                 stream.boxConstraint.minValues=process(stream.boxConstraint.minValues)
@@ -1518,34 +1575,35 @@ class Reshape1Dto2D(Layer):
             outputs[-1].tensor=tf.reshape(t,[-1,t.shape[1].value,t.shape[3].value])
             if outputs[-1].mask is not None:
                 t=outputs[-1].mask
-                outputs[-1].mask=tf.reshape(t,[-1,t.shape[1].value,t.shape[3].value]) 
+                outputs[-1].mask=tf.reshape(t,[-1,t.shape[1].value,t.shape[3].value])
         return outputs
 
 
 class DRMMBlock2D(LayerStack):
-    def __init__(self,width:int,height:int,nComponentsPerLayer: int, nLayers:int, kernelSize=[1,3,3,1], stride=[1,2,2,1], nDiscardedInputs=0,nNonLatentInputs=0,bwdSamplingTemperature=1.0,precisionRho=0):
+    def __init__(self,width:int,height:int,nComponentsPerLayer: int, nLayers:int, kernelSize=[1,3,3,1], stride=[1,2,2,1], nDiscardedInputs=0,nNonLatentInputs=0,bwdSamplingTemperature=1.0,precisionRho=0,useMaximumLikelihoodLoss=False,gradStopStrength=1.0,trainingPhase=None):
         LayerStack.__init__(self)
         extractPatches=ExtractPatches(patchSize=kernelSize,stride=stride)
         self.add(extractPatches)
         interleavePatches=InterleavePatches()
         self.add(interleavePatches)
         for i in range(nLayers):
-            self.add(RMM(nComponentsPerLayer,nNonLatentInputs=nNonLatentInputs,allowResample=False,bwdSamplingTemperature=bwdSamplingTemperature,precisionRho=precisionRho,inputWidth=width,inputHeight=height))
+            self.add(RMM(nComponentsPerLayer,nNonLatentInputs=nNonLatentInputs,allowResample=False,bwdSamplingTemperature=bwdSamplingTemperature,precisionRho=precisionRho,inputWidth=width,inputHeight=height,useMaximumLikelihoodLoss=useMaximumLikelihoodLoss,gradStopStrength=gradStopStrength,trainingPhase=trainingPhase))
         self.lastRMM=self.layers[-1]
         self.add(DeinterleavePatches(interleavePatches))
         if nDiscardedInputs>0:
             self.add(DiscardResiduals(nDiscardedInputs))
- 
+
 
 
 #blockDefs is a list of dicts
 class DRMMBlockHierarchy(LayerStack):
-    def __init__(self,sess,inputs,blockDefs,lastBlockClasses,lastBlockLayers,useStagedTraining=True,nSampled=1,initialLearningRate=0.001,finalEStepPrecision=1.0,train=True):
+    def __init__(self,sess,inputs,blockDefs,lastBlockClasses,lastBlockLayers,useStagedTraining=True,initialLearningRate=0.001,finalEStepPrecision=1.0,train=True,endToEnd=True):
         LayerStack.__init__(self,sess)
         self.sess=sess
         if type(inputs) is DataStream:
             inputs=[inputs]  #everything below assumes that we have a list of DataStream instances => convert to one
         self.inputs=inputs.copy()
+        nStages=len(blockDefs)+1
 
         #a placeholder for sampling temperature, will be used in sample() and initializing the sampling operations
         self.temperature=tf.placeholder_with_default(tf.constant(1.0,dtype=tf.float32),shape=[])
@@ -1559,39 +1617,46 @@ class DRMMBlockHierarchy(LayerStack):
 
         #Determine input width & height and check that all inputs have same width and height
         width=inputs[0].tensor.shape[1].value
-        height=1 if sequential else inputs[0].tensor.shape[2].value 
+        height=1 if sequential else inputs[0].tensor.shape[2].value
         for stream in inputs:
             assert(inputs[0].tensor.shape[1].value==stream.tensor.shape[1].value and inputs[0].tensor.shape[2].value==stream.tensor.shape[2].value)
 
 
         #learning rate and E-step precision schedule
-        if train:
-            self.trainingPhase=tf.Variable(dtype=tf.float32,initial_value=1.0,trainable=False)
-            thresholdedPhase=0.5+0.5*tf.tanh(20.0*(self.trainingPhase-1.0/2.0))
-            self.precisionRho=finalEStepPrecision*thresholdedPhase 
-            decayingPhase=tf.clip_by_value(tf.square(2.0-2.0*self.trainingPhase),0,1)
-            self.learningRate=initialLearningRate*decayingPhase  #first keep constant, start decaying quadratically in the middle
+        useMaximumLikelihoodLoss=False #endToEnd
+        self.trainingPhase=tf.Variable(dtype=tf.float32,initial_value=1.0,trainable=False)
+        decayingPhase=tf.clip_by_value(tf.square(2.0-2.0*self.trainingPhase),0,1)
+        self.learningRate=initialLearningRate*decayingPhase  #first keep constant, start decaying quadratically in the middle
+        thresholdedPhase=tf.nn.relu(tf.sign(self.trainingPhase-1.0/2.0))
+        thresholdedPhase2=tf.nn.relu(tf.sign(self.trainingPhase-3.0/4.0))
+        gradStopStrength=1.0-thresholdedPhase2 if endToEnd else 1.0
+        self.precisionRho=finalEStepPrecision*thresholdedPhase
 
-        #Add the DRMM blocks for pixel patches 
+        self.stagePhases=tf.Variable(dtype=tf.float32,initial_value=np.ones(nStages),trainable=False)
+        self.stageRhos=finalEStepPrecision*tf.nn.relu(tf.sign(self.stagePhases-1.0/2.0))
+
+        #Add the DRMM blocks for pixel patches
         stageLastLayers=[]
         nInputs=len(inputs)
         nResolutionLevels=len(blockDefs)
         resoIdx=0
-        firstSampledLevel=nResolutionLevels-(nSampled-1)
         self.blocks=[]
         for b in blockDefs:
             kernelSize=[1,b["kernelSize"],1,1] if sequential else [1,b["kernelSize"][0],b["kernelSize"][1],1]
             stride=[1,b["stride"],1,1] if sequential else [1,b["stride"][0],b["stride"][1],1]
-            width=width//stride[1]
-            height=height//stride[2]
+            width=int(ceil(width/stride[1]))
+            height=int(ceil(height/stride[2]))
             self.add(DRMMBlock2D(width=width,height=height,
                            nComponentsPerLayer=b["nClasses"],
                            nLayers=b["nLayers"],
                            kernelSize=kernelSize,
-                           stride=stride,                           
+                           stride=stride,
                            nNonLatentInputs=nInputs,nDiscardedInputs=nInputs,
-                           bwdSamplingTemperature=self.temperature if resoIdx>=firstSampledLevel else 0.0,
-                           precisionRho=self.precisionRho if train else finalEStepPrecision))     
+                           bwdSamplingTemperature=self.temperature*max([epsilon,b.get("temperature",0.0)]),
+                           precisionRho=self.stageRhos[resoIdx] if train else finalEStepPrecision,
+                           useMaximumLikelihoodLoss=useMaximumLikelihoodLoss,
+                           gradStopStrength=gradStopStrength,
+                           trainingPhase=self.trainingPhase))
             self.blocks.append(self.layers[-1])
             nInputs=b["nLayers"]
             if useStagedTraining:
@@ -1603,16 +1668,16 @@ class DRMMBlockHierarchy(LayerStack):
 
         #Add final layer(s) to model the flattened data
         for _ in range(lastBlockLayers):
-            self.add(RMM(lastBlockClasses,nNonLatentInputs=nInputs,precisionRho=self.precisionRho if train else finalEStepPrecision,bwdSamplingTemperature=self.temperature))
+            self.add(RMM(lastBlockClasses,nNonLatentInputs=nInputs,precisionRho=self.stageRhos[-1] if train else finalEStepPrecision,bwdSamplingTemperature=self.temperature,useMaximumLikelihoodLoss=useMaximumLikelihoodLoss,gradStopStrength=gradStopStrength,trainingPhase=self.trainingPhase))
 
         if useStagedTraining:
             stageLastLayers.append(len(self.layers))
-            
-        #Construct graphs 
+
+        #Construct graphs
         self.build(inputs,bwdSampling=True)
 
         #Ops for correcting the density estimates computed in the build() method above, which only considers the very last layer.
-        #Each DRMMBlock2D discards its non-latent inputs, assuming that the later layers do not need to model them. 
+        #Each DRMMBlock2D discards its non-latent inputs, assuming that the later layers do not need to model them.
         #Thus, we need to incorporate the densities conditional on the discarded streams here.
         for block in self.blocks:
             patchLogProbabilities=deinterleaveArray(block.lastRMM.nonLatentLogP,block.lastRMM.inputWidth,block.lastRMM.inputHeight)
@@ -1638,6 +1703,8 @@ class DRMMBlockHierarchy(LayerStack):
             stageIdx=0
             for L in range(len(self.layers)):
                 stageLoss+=self.fwdLosses[L]
+                if useBwdCorrection:
+                    stageLoss+=self.bwdLosses[L]
                 layerVars=self.layers[L].getVariables()
                 for v in layerVars:
                     stageVariables.append(v)
@@ -1648,27 +1715,13 @@ class DRMMBlockHierarchy(LayerStack):
                     stageVariables=[]
                     stageIdx+=1
 
-            #add bwd loss to the last stage
-            if useBwdCorrection:
-                self.stageLosses[-1]+=self.bwdLoss
-                allLayers=[]
-                def getAllLayers(layer,l):
-                    if hasattr(layer,"layers"):
-                        for childLayer in layer.layers:
-                            getAllLayers(childLayer,l)
-                    l.append(layer)
-                getAllLayers(self,allLayers)
-
-                for layer in allLayers:
-                    #add bwd correction variables if not already in the variableslist
-                    if hasattr(layer,"bwdVariables"):
-                        if not (layer.bwdVariables in self.stageVariables[-1]):
-                            self.stageVariables[-1].append(layer.bwdVariables)
         #Create optimizer
         if train:
             self.optimizer=tf.train.AdamOptimizer(learning_rate=self.learningRate)
             self.optimizeOps=[]
+            self.pretrainOps=[]
             for stageIdx in range(len(self.stageLosses)):
+                self.pretrainOps.append(self.optimizer.minimize(self.stageLosses[stageIdx],var_list=self.stageVariables[stageIdx]))
                 self.optimizeOps.append(self.optimizer.minimize(self.stageLosses[stageIdx],var_list=self.stageVariables[stageIdx]))
 
 
@@ -1677,20 +1730,24 @@ class DRMMBlockHierarchy(LayerStack):
         stage=int(np.clip(phase*nStages,0,nStages-1))
         stagePhase=(phase-stage*(1.0/nStages))*nStages
         self.trainingPhase.load(stagePhase,self.sess)
+        stagePhases=np.ones(nStages)
+        stagePhases[stage]=stagePhase
+        self.stagePhases.load(stagePhases,self.sess)
+        isPretraining=stagePhase<=0.5
         feed_dict={}
         if not isinstance(dataBatch,list):
             dataBatch=[dataBatch]
         for i in range(len(self.inputs)):
             feed_dict[self.inputs[i].tensor]=dataBatch[i]
             feed_dict[self.inputs[i].mask]=np.ones_like(dataBatch[i])
-        currLoss,currLearningRate,currPrecision,temp=self.sess.run([self.stageLosses[stage],self.learningRate,self.precisionRho,self.optimizeOps[stage]],feed_dict)
+        currLoss,currLearningRate,currPrecision,temp=self.sess.run([self.stageLosses[stage],self.learningRate,self.precisionRho,self.pretrainOps[stage] if isPretraining else self.optimizeOps[stage]],feed_dict)
         return {"loss":currLoss,"lr":currLearningRate,"rho":currPrecision,"stage":stage+1,"nStages":nStages}
     def sample(self,nSamples=None,inputs=None,temperature=1.0,getProbabilities=False,sorted=False):
         """
         Generate a batch ofsamples.
 
         Parameters:
-        inputs      DataIn instance or a list of DataIn instances if this model has multiple input streams. 
+        inputs      DataIn instance or a list of DataIn instances if this model has multiple input streams.
                     Use None for unconditional sampling (Note: in this case nSamples must not be None)
         nSamples    Number of samples to generate. Can be None if defined through the shape of the input data batch.
 
@@ -1702,7 +1759,7 @@ class DRMMBlockHierarchy(LayerStack):
         feed_dict={}
         if isinstance(inputs,DataIn):
             assert(self.numInputs==1)
-            #If the caller passed in a single DataIn instance instead of a list of them, 
+            #If the caller passed in a single DataIn instance instead of a list of them,
             #wrap the instance in a list, and remember to unwrap the return value
             inputs=[inputs]
         for i in range(len(self.inputs)):
@@ -1718,8 +1775,8 @@ class DRMMBlockHierarchy(LayerStack):
                 #This allows more useful probability estimates for samples with incorrect values.
                 forcedSamples=samples[i]
                 if (inputs is not None) and (inputs[i] is not None) and (inputs[i].mask is not None):
-                    forcedSamples=inputs[i].data*inputs[i].mask+samples[i]*(1.0-inputs[i].mask) 
-                feed_dict[self.inputs[i].tensor]=forcedSamples 
+                    forcedSamples=inputs[i].data*inputs[i].mask+samples[i]*(1.0-inputs[i].mask)
+                feed_dict[self.inputs[i].tensor]=forcedSamples
                 feed_dict[self.inputs[i].mask]=np.ones_like(samples[i])
             probabilities,logProbabilities=self.sess.run([self.p,self.logp],feed_dict)
             probabilities=probabilities[:,0]
@@ -1731,82 +1788,6 @@ class DRMMBlockHierarchy(LayerStack):
         if self.numInputs==1:
             samples=samples[0]
         if getProbabilities:
-            return samples,probabilities 
+            return samples,probabilities
         else:
             return samples
-
-#Same as DeepRMM, but with inputs discretized
-class DeepRMM_Discretized(LayerStack):
-    def __init__(self,inputs,nDiscretizationLevels,nDiscretizationLayers,nComponentsPerLayer,nLayers):
-        LayerStack.__init__(self)
-        if type(inputs) is DataStream:
-            inputs=[inputs]  #everything below assumes that we have a list of DataStream instances => convert to one
-        nInputs=len(inputs)
-        assert(nInputs==1)  #only support one datastream for now
-        #To quantize each variable, we utilize the layers implemented for 2D array data:
-        #For M variables, we first reshape into an M-by-1 array, with 1 channel
-        #We can then use DRMMBlock2D to encode the variables 
-        self.add(Reshape([-1,inputs[0].tensor.shape[1].value,1,1]))
-        self.add(DRMMBlock2D(
-                        nComponentsPerLayer=nDiscretizationLevels,
-                        nLayers=nDiscretizationLayers,
-                        kernelSize=[1,1,1,1],
-                        stride=[1,1,1,1],                           
-                        nNonLatentInputs=nInputs,nDiscardedInputs=nInputs))
-        #Flatten all streams
-        self.add(Flatten())
-
-        #Add final layer(s) to model the flattened data
-        for _ in range(nLayers):
-            self.add(RMM(nComponentsPerLayer,nNonLatentInputs=nDiscretizationLayers))
-        self.build(inputs)
-
-
-
-#Numpy helper for quantizing data batch variables
-class Quantizer:
-    def __init__(self,shape,minValues,maxValues,nLevels):
-        if isinstance(minValues,int) or isinstance(minValues,float):
-            self.minValues=minValues
-        else:
-            self.minValues=minValues.copy()
-        if isinstance(maxValues,int) or isinstance(maxValues,float):
-            self.maxValues=maxValues
-        else:
-            self.maxValues=maxValues.copy()
-        self.range=self.maxValues-self.minValues
-        self.nLevels=nLevels
-        converterShape=[]
-        for i in range(len(shape)):
-            converterShape.append(1)
-        converterShape.append(nLevels)
-        self.converter=np.reshape(np.linspace(0,1,num=nLevels),converterShape)
-    def toDiscrete(self,data,mask=None):
-        #convert to one-hot tensor, with one extra dimension
-        scaled=(data-self.minValues)/self.range
-        indices=np.round((self.nLevels-1)*scaled)
-        indices=np.clip(indices,0,self.nLevels-1)
-        onehot=np.eye(self.nLevels)[indices.astype(int)]
-    
-        #pack all variables to a "multi-discrete" stream
-        shape=list(data.shape)
-        shape[-1]*=self.nLevels
-        if mask is None:
-            return np.reshape(onehot,shape) 
-        else:
-            uniform=np.ones_like(onehot)/self.nLevels
-            expanded=np.expand_dims(mask,len(mask.shape)) #[:,np.newaxis]
-            expanded=np.ones_like(onehot)*expanded
-            return np.reshape(onehot,shape),np.reshape(expanded,shape)
-
-    def toContinuous(self,data):
-        #unpack to one-hot, adding one dimension
-        shape=list(data.shape)
-        shape[-1]=shape[-1]//self.nLevels
-        shape.append(self.nLevels)
-        data=np.reshape(data,shape)
-
-        #convert back to indices and then unnormalized continuous values
-        #return np.argmax(data,axis=-1)/(self.nLevels-1)*self.range+self.minValues
-        return np.sum(data*self.converter,axis=-1)*self.range+self.minValues
-    
