@@ -1,6 +1,5 @@
 import numpy as np
 
-#from .visualization import Skeleton
 class Skeleton:
 
     joint_list = ['left_hand', 'right_hand', 'left_lower_arm',

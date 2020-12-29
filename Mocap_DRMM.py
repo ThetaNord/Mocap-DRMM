@@ -4,13 +4,15 @@ from pathlib import Path
 import numpy as np
 import tensorflow as tf
 
-import DRMM
-from DRMM import DRMMBlockHierarchy, dataStream, DataIn
-
 # Visualization libraries
 import matplotlib.pyplot as plt
 import mpl_toolkits.mplot3d.axes3d as p3
 import matplotlib.animation as animation
+
+# Local imports
+from DRMM import DataIn
+from utils import createModel
+from visualization_utils import Skeleton, animateMultipleSkeletons, animateMultipleScatters, getAxisLimits, cleanAxis
 
 def parse_args(argv):
     parser = argparse.ArgumentParser()
@@ -231,119 +233,6 @@ def parse_args(argv):
         args.track_joints = args.track_joints.split(',')
     return args
 
-#from .visualization import Skeleton
-class Skeleton:
-
-    joint_list = ['left_hand', 'right_hand', 'left_lower_arm',
-        'right_lower_arm', 'left_upper_arm', 'right_upper_arm',
-        'left_shoulder', 'right_shoulder', 'head', 'neck', 'spine', 'hips',
-        'left_upper_leg', 'right_upper_leg', 'left_lower_leg', 'right_lower_leg',
-        'left_foot', 'right_foot', 'left_toes', 'right_toes']
-    connected_joints = [('hips', 'spine'), ('hips', 'left_upper_leg'),
-        ('hips', 'right_upper_leg'), ('left_upper_leg', 'left_lower_leg'),
-        ('left_lower_leg', 'left_foot'),  ('left_foot', 'left_toes'),
-        ('right_upper_leg', 'right_lower_leg'), ('right_lower_leg', 'right_foot'),
-        ('right_foot', 'right_toes'), ('spine', 'neck'), ('neck', 'head'),
-        ('neck', 'left_upper_arm'), ('left_upper_arm', 'left_lower_arm'),
-        ('left_lower_arm', 'left_hand'), ('neck', 'right_upper_arm'),
-        ('right_upper_arm', 'right_lower_arm'), ('right_lower_arm', 'right_hand')]
-
-    def __init__(self, joint_array, color='tab:blue', alpha=0.8):
-        #self.connections = [(joint_list.index(connection[0]), joint_list.index(connection[1])) for connection in connected_joints]
-        self.joint_sequence = joint_array
-        self.root_node = 'hips'
-        self.color = color
-        self.alpha = alpha
-
-    def get_joint_child(self, joint_name):
-        return None
-
-    def get_joint_position(self, joint_name, t, animation_index=0):
-        joint_index = self.joint_list.index(joint_name)*3
-        return self.joint_sequence[animation_index, t, joint_index:joint_index+3]
-
-    def get_all_joint_positions(self, t, animation_index=0):
-        xs = self.joint_sequence[animation_index, t, 0::3]
-        ys = self.joint_sequence[animation_index, t, 1::3]
-        zs = self.joint_sequence[animation_index, t, 2::3]
-        return xs, ys, zs
-
-    def animate_joints(self, t, graph, axis, animation_index=0):
-        xs, ys, zs = self.get_all_joint_positions(t, animation_index)
-        graph._offsets3d = (xs, zs, ys)
-        if axis != None:
-            origin = self.get_joint_position(self.root_node, t, animation_index)
-            axis.set_xlim3d([origin[0]+1.0, origin[0]-1.0])
-            axis.set_ylim3d([origin[2]+1.0, origin[2]-1.0])
-
-    def animate_skeleton(self, t, lines, axis, animation_index=0):
-        if axis != None:
-            origin = self.get_joint_position(self.root_node, t, animation_index)
-            axis.set_xlim3d([origin[0]+0.75, origin[0]-0.75])
-            axis.set_ylim3d([origin[2]+0.75, origin[2]-0.75])
-            axis.set_zlim3d([0.0, 1.5])
-        for i, (start_joint, end_joint) in enumerate(self.connected_joints):
-            start_position = self.get_joint_position(start_joint, t, animation_index)
-            end_position = self.get_joint_position(end_joint, t, animation_index)
-            positions = np.stack((start_position, end_position))
-            xs, ys, zs = positions[:,0], positions[:,1], positions[:,2]
-            lines[i].set_data(xs, zs)
-            lines[i].set_3d_properties(ys)
-
-def animateMultipleSkeletons(t, skeletons, lines_list, axes, animation_indices=None):
-    if animation_indices is None:
-        animation_indices = [0 for s in skeletons]
-    for skeleton, lines, axis, index in zip(skeletons, lines_list, axes, animation_indices):
-        skeleton.animate_skeleton(t, lines, axis, index)
-
-def animateMultipleScatters(t, skeletons, graphs, axes, animation_indices=None):
-    if animation_indices is None:
-        animation_indices = [0 for s in skeletons]
-    for skeleton, graph, axis, index in zip(skeletons, graphs, axes, animation_indices):
-        skeleton.animate_joints(t, graph, axis, index)
-
-def getAxisLimits(skeletons, animation_index=0):
-    x0, x1, y0, y1, z0, z1 = None, None, None, None, None, None
-    for skeleton in skeletons:
-        xs = skeleton.joint_sequence[animation_index, :, 0::3]
-        ys = skeleton.joint_sequence[animation_index, :, 1::3]
-        zs = skeleton.joint_sequence[animation_index, :, 2::3]
-        if x0 == None or x0 > np.min(xs): x0 = np.min(xs)
-        if x1 == None or x1 < np.max(xs): x1 = np.max(xs)
-        if y0 == None or y0 > np.min(ys): y0 = np.min(ys)
-        if y1 == None or y1 < np.max(ys): y1 = np.max(ys)
-        if z0 == None or z0 > np.min(zs): z0 = np.min(zs)
-        if z1 == None or z1 < np.max(zs): z1 = np.max(zs)
-    rnge = np.max([x1-x0, y1-y0, z1-z0])
-    if x1-x0 < rnge:
-        diff = rnge-(x1-x0)
-        x0 -= diff/2
-        x1 += diff/2
-    if y1-y0 < rnge:
-        diff = rnge-(y1-y0)
-        y0 -= diff/2
-        y1 += diff/2
-    if z1-z0 < rnge:
-        diff = rnge-(z1-z0)
-        z0 -= diff/2
-        z1 += diff/2
-    return x0, x1, y0, y1, z0, z1
-
-def cleanAxis(ax):
-    ax.grid(False)
-    ax.set_xlabel('')
-    ax.set_ylabel('')
-    ax.set_zlabel('')
-    ax.xaxis._axinfo['tick']['outward_factor'] = 0
-    ax.xaxis._axinfo['tick']['inward_factor'] = 0
-    ax.yaxis._axinfo['tick']['outward_factor'] = 0
-    ax.yaxis._axinfo['tick']['inward_factor'] = 0
-    ax.zaxis._axinfo['tick']['outward_factor'] = 0
-    ax.zaxis._axinfo['tick']['inward_factor'] = 0
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.set_zticks([])
-
 def loadDataset(args):
     # Load the data from the provided .npz file
     data_array = np.load(Path(args.data_path))
@@ -351,6 +240,7 @@ def loadDataset(args):
     train_data = data_array['train_data']
     validation_data = data_array['validation_data']
     test_data = data_array['test_data']
+    # Create placeholders for tensors so that they do not have to be loaded into memory all at once
     train_placeholder = tf.placeholder(train_data.dtype, train_data.shape)
     validation_placeholder = tf.placeholder(validation_data.dtype, validation_data.shape)
     test_placeholder = tf.placeholder(test_data.dtype, test_data.shape)
@@ -364,13 +254,7 @@ def loadDataset(args):
     train_dataset = train_dataset.shuffle(buffer_size=args.shuffle_buffer, seed=args.seed, reshuffle_each_iteration=True).repeat().batch(args.batch_size)
     return train_dataset, validation_dataset, test_dataset, train_dict, validation_dict, test_dict
 
-def getTestItems(data_path, indices):
-    # Load the data from the provided .npz file
-    data_array = np.load(Path(data_path))
-    items = data_array['test_data'][indices]
-    print(items)
-    return items
-
+# Calculate minimum error between a set of target animations and a set of output samples
 def calculateMinimumError(samples, targets, args, masks=None):
     if args.error_mode == "keypoints":
         if masks is None:
@@ -387,6 +271,7 @@ def calculateMinimumError(samples, targets, args, masks=None):
     min_index = np.where(errors == min_error)[0][0]
     return min_error, min_index, errors
 
+# Get a list of keyframe timesteps for an animation
 def getKeyFrameTimesteps(animation, args):
     timesteps = None
     if args.keyframe_mode == 'fixed':
@@ -397,6 +282,7 @@ def getKeyFrameTimesteps(animation, args):
         print(timesteps)
     return timesteps
 
+# Get a list of keyframes with regular intervals for an animation of given length
 def getFixedKeyframes(sequence_length, keyframe_count):
     timesteps = [0]
     for i in range(1,keyframe_count):
@@ -415,210 +301,11 @@ def calculateKeyFrames(sequence, keyframe_count, interval):
         next_changes = np.subtract(current_frame, sequence[i+interval])
         total_changes = np.absolute(prev_changes + next_changes)
         change_rates[i] = np.sum(total_changes)
-    #print(change_rates)
     timesteps = np.zeros(1)
     idx = np.argpartition(change_rates, -keyframe_count-1)
     timesteps = np.sort(np.concatenate((timesteps, idx[-(keyframe_count-1):])))
     timesteps = np.append(timesteps, [sequence.shape[0]-1]).astype(int)
     return timesteps
-
-def createModel(session, train, args):
-    model = None
-    if args.model_type == "baseline":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":2,"kernelSize":7,"stride":2},   #input seq. length 32, output length 16
-                {"nClasses":256,"nLayers":3,"kernelSize":7,"stride":2},   #in 16, out 8
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=4,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    elif args.model_type == "extended":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":6,"kernelSize":5,"stride":2},   #input seq. length 64, output length 32
-                {"nClasses":256,"nLayers":8,"kernelSize":5,"stride":2},   #in 32, out 16
-                {"nClasses":256,"nLayers":10,"kernelSize":5,"stride":2},   #in 16, out 8
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=10,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.002)
-    elif args.model_type == "extended-lite":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":3,"kernelSize":7,"stride":2},   #input seq. length 64, output length 32
-                {"nClasses":256,"nLayers":4,"kernelSize":7,"stride":2},   #in 32, out 16
-                {"nClasses":256,"nLayers":5,"kernelSize":7,"stride":2},   #in 16, out 8
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=5,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    elif args.model_type == "large-kernel":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":2,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":3,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":4,"kernelSize":9,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=5,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    elif args.model_type == "large-kernel-extended":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":2,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":3,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":4,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":9,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=5,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    elif args.model_type == "large-kernel-extra-layer":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":3,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":4,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":6,"kernelSize":9,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=6,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.004)
-    elif args.model_type == "xl-kernel":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":2,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":3,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":4,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=5,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    elif args.model_type == "deep-stack":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":2,"kernelSize":7,"stride":2},
-                {"nClasses":256,"nLayers":3,"kernelSize":7,"stride":2},
-                {"nClasses":256,"nLayers":4,"kernelSize":7,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":7,"stride":2},
-                {"nClasses":256,"nLayers":6,"kernelSize":7,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=6,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    elif args.model_type == "supersized":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":4,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":6,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":8,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":10,"kernelSize":11,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=10,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.004)
-    elif args.model_type == "supersized-2":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":4,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":6,"kernelSize":9,"stride":2},
-                {"nClasses":256,"nLayers":8,"kernelSize":7,"stride":2},
-                {"nClasses":256,"nLayers":10,"kernelSize":5,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=10,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.004)
-    elif args.model_type == "all-fives":
-        model = DRMMBlockHierarchy(session,
-            inputs=dataStream(
-                dataType="continuous",
-                shape=[None,args.sequence_length,args.data_dimension],
-                useGaussianPrior=True,
-                useBoxConstraints=True
-            ),
-            blockDefs=[
-                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
-                {"nClasses":256,"nLayers":5,"kernelSize":11,"stride":2},
-            ],
-            lastBlockClasses=256,
-            lastBlockLayers=5,
-            train=train,    #if False, optimization ops will not be created, which saves some time
-            initialLearningRate=0.005)
-    return model
 
 def testModel(model, test_dataset, test_dict, session, args):
     # Create iterator for the test dataset
@@ -669,7 +356,7 @@ def sampleModel(model, args, condition_sample=None):
         if args.debug: print(samples)
     elif args.sample_mode == "conditioned":
         if condition_sample is None:
-            print("ERROR: Condition sample required!")
+            print("ERROR: Condition sample is required!")
             return
         waypointTimesteps = getKeyFrameTimesteps(condition_sample, args)
         if args.keyframe_display_mode == 'next':
@@ -979,7 +666,7 @@ def showBestAndWorst(model, test_dataset, test_dict, session, args):
         plt.show()
 
 def main(args):
-    #Init tf
+    # Init Tensorflow
     tf.reset_default_graph()
     sess = tf.Session()
     tf.set_random_seed(args.seed)
