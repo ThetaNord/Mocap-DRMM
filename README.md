@@ -41,35 +41,38 @@ The pre-processor supports the following command line arguments for customising 
 ## Training, Testing and Sampling the Model
 
 When a dataset is available, the file Mocap_DRMM.py can be used to train, test and sample models.
-The file supports the following command line parameters:
+The file supports various command line parameters for designating what processes should be executed and how. The following are the more frequently used ones:
 
 * data-path: Relative path to the file containing the dataset to be used for the indicated procedures. Defaults to: data/mocap-dataset.npz
 * model-filename: Relative path and filename prefix for saving and loading model. Defaults to: models/mocap_model
+* model-type: What model architecture to use. See the function "createModel" in utils.py for all available options. Note that the correct model should be designated even when loading a pre-existing model. Defaults to: baseline
+* train-mode: Defines whether a new model should be trained. Supported values are "yes", "no", and "auto". The values "yes" and "no" can be used to force or prevent the training of a new model, respectively, whereas if set to "auto" a new model will only be trained if the model files designated by the "model-filename" parameter do not already exist. Defaults to: auto
 * batch-size: The batch size used for training a model. Defaults to: 64
 * iter-count: Over how many iterations should the model be trained. Defaults to: 20000
-* seq-length: The number of frames in the input and output sequences for the network. Note that this value should be modified if and only if it was also modified for dataset creation. Defaults to: 64
-* data-dim: The dimensionality of the input and output data, that is, the number of values used to describe each frame in a sequence. Note that this value should not be modified unless the code for the dataset creation has been modified. Defaults to: 60
 * shuffle-buffer: The size of the buffer used for shuffling the dataset during training. Defaults to: 10000
-* keyframe-count: How many "keyframes" should be used when taking conditioned samples from the model. Note that this is in addition to the first frame of a sequence, which is always designated as a keyframe. Defaults to: 2
-* keyframe-mode: How to determine which frames to use as keyframes. Two modes are supported: "fixed" and "calculated". If set to "fixed", the keyframes will be placed throughout the animation at even intervals. If set to "calculated", the keyframes will be selected individually for each conditioning sequence based on a rate of change between frames calculated from the joint coordinates. Defaults to: fixed
-* keyframe-calculation-interval: If using calculated keyframes, how many frames backward and forward to look for when calculating the rate of change. Defaults to: 2
-* keyframe-display-mode: How should conditioning positions for keyframes be displayed in visualizations (if applicable). If set to "next", only the position for the next keyframe is displayed and it will disappear after that frame has been reached. If set to "all", positions for each keyframe are displayed at all times. Defaults to: next
-* track-joints: The names of all joints to be used as conditioning throughout the sample. Multiple joint names should be separated by commas. If set to "none", no joints will be used for conditioning. Trajectories for tracked joints will be displayed in visualizations. Defaults to: none
 * sample-mode: How to sample the model. Four options are supported: unconditioned, conditioned, extremes and none. If set to "unconditioned", model will be sampled without any conditioning. If set to "conditioned", a sequence from a set designated by the parameter "sample-set" will be used for conditioning the sample as defined by the joint tracking and keyframe related parameters. If set to "extremes", all sequences in the designated set will be used as conditioning in turn and results will be displayed for five sequences with the smallest and greatest error each. Note that the "extremes" option currently does not support all visualization enhancements, such as joint tracking. If set to "none", the model will not be sampled. Defaults to: unconditioned
 * sample-set: Which set of data to use for conditioning samples (if applicable). Options are "train", "test", and "validation". Defaults to: test
 * sample-batch-size: Batch size to use for sampling, that is, how many results to generate for each sample. This value is also used during testing the model. Defaults to: 32
+* keyframe-count: How many "keyframes" should be used when taking conditioned samples from the model. Note that this is in addition to the first frame of a sequence, which is always designated as a keyframe. Defaults to: 2
+* keyframe-display-mode: How should conditioning positions for keyframes be displayed in visualizations (if applicable). If set to "next", only the position for the next keyframe is displayed and it will disappear after that frame has been reached. If set to "all", positions for each keyframe are displayed at all times. Defaults to: next
+* track-joints: The names of all joints to be used as conditioning throughout the sample. Multiple joint names should be separated by commas. If set to "none", no joints will be used for conditioning. Trajectories for tracked joints will be displayed in visualizations. Defaults to: none
+* shuffle-conditions: If this flag is set, the set used for conditioning will be shuffled before sampling. Useful when a random conditioned sample should be produced.
+* test-mode: Designates, which set of sequences the model should be tested on. Supported options are "test", "validation", and "none". Defaults to: test
+* no-plot: If this flag is set, the resulting sample will not be displayed on screen after creating the visualization is complete.
+* seed: The random seed used for initializing random number generation during execution. Defaults to current system time, that is, the value returned by int(time.time())
+* debug: Setting this flag enables some additional runtime prints for debugging purposes.
+
+Additionally, the following parameters are also supported. However, there usually is little need to modify them. Some are even recommended not to be modified at all in normal use.
+
+* seq-length: The number of frames in the input and output sequences for the network. Note that this value should be modified if and only if it was also modified for dataset creation. Defaults to: 64
+* data-dim: The dimensionality of the input and output data, that is, the number of values used to describe each frame in a sequence. Note that this value should not be modified unless the code for the dataset creation has been modified. Defaults to: 60
+* keyframe-mode: How to determine which frames to use as keyframes. Two modes are supported: "fixed" and "calculated". If set to "fixed", the keyframes will be placed throughout the animation at even intervals. If set to "calculated", the keyframes will be selected individually for each conditioning sequence based on a rate of change between frames calculated from the joint coordinates. Defaults to: fixed
+* keyframe-calculation-interval: If using calculated keyframes, how many frames backward and forward to look for when calculating the rate of change. Defaults to: 2
 * sample-out: Filename for saving the visualization animation from sampling the model. Note that animations are saved in the "animations" folder. Defaults to: animation.gif
 * sample-cutoff: When generating samples, how many of the top results by likelihood should be considered. This values is used when generating conditioned samples or when testing the network. Note that out of the samples designated by this number, the one with the smallest error will be selected. Defaults to: 10
-* shuffle-conditions: If this flag is set, the set used for conditioning will be shuffled before sampling. Useful when a random conditioned sample should be produced.
 * temperature: The temperature to use when sampling the model. Defaults to: 1.0
-* train-mode: Defines whether a new model should be trained. Supported values are "yes", "no", and "auto". The values "yes" and "no" can be used to force or prevent the training of a new model, respectively, whereas if set to "auto" a new model will only be trained if the model files designated by the "model-filename" parameter do not already exist. Defaults to: auto
-* model-type: What model architecture to use. See the function "createModel" in utils.py for all available options. Note that the correct model should be designated even when loading a pre-existing model. Defaults to: baseline
-* test-mode: Designates, which set of sequences the model should be tested on. Supported options are "test", "validation", and "none". Defaults to: none
 * error-mode: Indicates whether error should be calculated based on all frames in the conditioning sequence ("all") or only the designated keyframes ("keypoints"). Defaults to: all
 * error-calculation. Indicates whether errors for joint position should be calculated using L1 or L2 error. Defaults to: L2
 * animation-type: Defines whether samples should be visualized as skeletons with joints connected by lines ("skeleton") or as a scatter plot with joints only shown as points ("scatter"). Defaults to: skeleton
 * axis-type: How to set axis limits when visualizing the animation. If set to "full", the limits will be set such that the whole animation fits into the same view. If set to "centered", the visualization will be centered on the current frame and will follow the root joint. Defaults to: full
 * axis-display: How much information to display for the axes. If set to "full", axis ticks, values and grid lines will be displayed, whereas if set to "minimal", they will be hidden. Defaults to: minimal
-* no-plot: If this flag is set, the resulting sample will not be displayed on screen after creating the visualization is complete.
-* seed: The random seed used for initializing random number generation during execution. Defaults to current system time, that is, the value returned by int(time.time())
-* debug: Setting this flag enables some additional runtime prints for debugging purposes.
