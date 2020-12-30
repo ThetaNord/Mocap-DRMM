@@ -40,14 +40,14 @@ def parse_args(argv):
         '--data-path',
         dest='data_path',
         help='relative path to the zip file containing the data to process',
-        default='data/CMU-Mocap-csv.zip',
+        default='data/mocap-csv.zip',
         type=str
     )
     parser.add_argument(
         '--output-path',
         dest='output_path',
         help='relative path to save the output',
-        default='data/cmu-numpy_test.npz',
+        default='data/mocap-dataset.npz',
         type=str
     )
     parser.add_argument(
@@ -74,7 +74,7 @@ def parse_args(argv):
     parser.add_argument(
         '--split-mode',
         dest='split_mode',
-        help='whether to split the test set off first or last',
+        help='whether to split the test set off first or last (or both)',
         default='last',
         type=str
     )

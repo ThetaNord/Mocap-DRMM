@@ -20,7 +20,7 @@ def parse_args(argv):
         '--data-path',
         dest='data_path',
         help='relative path to the npz file containing training and testing data',
-        default='data/cmu-numpy.npz',
+        default='data/mocap-dataset.npz',
         type=str
     )
     parser.add_argument(
@@ -158,7 +158,7 @@ def parse_args(argv):
     parser.add_argument(
         '--model-type',
         dest='model_type',
-        help='what model architecture to use (baseline/extended)',
+        help='what model architecture to use',
         default='baseline',
         type=str
     )
@@ -194,7 +194,7 @@ def parse_args(argv):
         '--axis-type',
         dest='axis_type',
         help='how to set axis limits on animation (centered/full)',
-        default='centered',
+        default='full',
         type=str
     )
     parser.add_argument(
